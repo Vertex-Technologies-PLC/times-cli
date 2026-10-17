@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::time::{Duration, Instant};
 
 use console::style;
@@ -6,13 +7,27 @@ use serde_json::{json, Value};
 use crate::api::types::{DevMe, DevOrg, DevSession, DeviceCode};
 use crate::auth::store::Credentials;
 use crate::auth::{self, remember_session};
-use crate::cli::LoginArgs;
+use crate::cli::{AuthCmd, LoginArgs};
+use crate::config::validate_profile_name;
 use crate::context::Ctx;
 use crate::error::CliError;
+use crate::ui::or_dash;
 
 const CLIENT_NAME: &str = "times-cli";
 
-pub async fn login(ctx: &mut Ctx, args: LoginArgs) -> anyhow::Result<()> {
+pub async fn run(ctx: &mut Ctx, cmd: AuthCmd) -> anyhow::Result<()> {
+    match cmd {
+        AuthCmd::Login(args) => login(ctx, args).await,
+        AuthCmd::Logout => logout(ctx).await,
+        AuthCmd::Whoami => whoami(ctx).await,
+        AuthCmd::Refresh => refresh_cmd(ctx).await,
+        AuthCmd::List => list(ctx),
+        AuthCmd::Use { name } => use_profile(ctx, &name),
+        AuthCmd::Delete { name } => delete(ctx, &name).await,
+    }
+}
+
+async fn login(ctx: &mut Ctx, args: LoginArgs) -> anyhow::Result<()> {
     if let Some(token) = args.token {
         return login_with_token(ctx, token.trim()).await;
     }
@@ -49,9 +64,11 @@ pub async fn login(ctx: &mut Ctx, args: LoginArgs) -> anyhow::Result<()> {
     let session = poll_device_token(ctx, &code).await?;
     let session = ensure_org(ctx, session).await?;
     remember_session(ctx, &session, true)?;
+    activate_profile(ctx)?;
 
     if ctx.out.json {
         return ctx.out.json(&json!({
+            "profile": ctx.profile,
             "user": session.user,
             "org": session.org,
             "orgs": session.orgs,
@@ -59,6 +76,7 @@ pub async fn login(ctx: &mut Ctx, args: LoginArgs) -> anyhow::Result<()> {
     }
     ctx.out
         .success(format!("Signed in as {}", session.user.display()));
+    ctx.out.info(format!("Profile: {}", ctx.profile));
     match &session.org {
         Some(org) => ctx
             .out
@@ -82,7 +100,7 @@ async fn poll_device_token(ctx: &Ctx, code: &DeviceCode) -> anyhow::Result<DevSe
         if Instant::now() >= deadline {
             spinner.finish_and_clear();
             return Err(CliError::auth(
-                "The code expired before it was approved. Run `times login` again.",
+                "The code expired before it was approved. Run `times auth login` again.",
             ));
         }
         tokio::time::sleep(Duration::from_secs(interval)).await;
@@ -123,7 +141,7 @@ async fn poll_device_token(ctx: &Ctx, code: &DeviceCode) -> anyhow::Result<DevSe
                     "expired_token" | "invalid_grant" => {
                         spinner.finish_and_clear();
                         return Err(CliError::auth(
-                            "The code expired before it was approved. Run `times login` again.",
+                            "The code expired before it was approved. Run `times auth login` again.",
                         ));
                     }
                     _ => {
@@ -198,24 +216,252 @@ async fn login_with_token(ctx: &mut Ctx, token: &str) -> anyhow::Result<()> {
     profile.user = None;
     profile.org_id = ex.org_id.clone();
     profile.org_slug = None;
-    ctx.save_config()?;
+    activate_profile(ctx)?;
 
     if ctx.out.json {
         return ctx.out.json(&json!({
+            "profile": ctx.profile,
             "org_id": ex.org_id,
             "scopes": ex.scopes,
             "token_id": ex.token_id,
         }));
     }
     ctx.out.success("Signed in with a developer token.");
+    ctx.out.info(format!("Profile: {}", ctx.profile));
     if !ex.scopes.is_empty() {
         ctx.out.info(format!("Scopes: {}", ex.scopes.join(", ")));
     }
     Ok(())
 }
 
-pub async fn logout(ctx: &mut Ctx) -> anyhow::Result<()> {
-    let creds = ctx.store.load(&ctx.profile);
+async fn logout(ctx: &mut Ctx) -> anyhow::Result<()> {
+    let name = ctx.profile.clone();
+    let signed_out = sign_out_profile(ctx, &name).await?;
+    ctx.save_config()?;
+
+    if ctx.out.json {
+        return ctx.out.json(&json!({
+            "profile": name,
+            "signed_out": signed_out,
+        }));
+    }
+    if signed_out {
+        ctx.out.success(format!("Signed out of `{name}`."));
+    } else {
+        ctx.out.info(format!("`{name}` was not signed in."));
+    }
+    if ctx.env_token.is_some() {
+        ctx.out
+            .warn("TIMES_TOKEN is still set in your environment.");
+    }
+    Ok(())
+}
+
+async fn whoami(ctx: &mut Ctx) -> anyhow::Result<()> {
+    let state = ctx.authenticate().await?;
+    let me: anyhow::Result<DevMe> = ctx
+        .client
+        .get("/api/v1/auth/developer/me", Some(&state.access_token), &[])
+        .await;
+
+    let me = match me {
+        Ok(me) => me,
+        Err(_) if state.via_token => {
+            if ctx.out.json {
+                return ctx.out.json(&json!({
+                    "profile": ctx.profile,
+                    "via_token": true,
+                    "org_id": state.org_id,
+                    "api_url": ctx.client.base(),
+                }));
+            }
+            ctx.out.fields(&[
+                ("Profile", ctx.profile.clone()),
+                ("Auth", "developer token".into()),
+                ("Org", state.org_id.unwrap_or_else(|| "-".into())),
+                ("API", ctx.client.base().to_string()),
+            ]);
+            return Ok(());
+        }
+        Err(e) => return Err(e),
+    };
+
+    if ctx.out.json {
+        return ctx.out.json(&json!({
+            "profile": ctx.profile,
+            "user": me.user,
+            "org": me.org,
+            "orgs": me.orgs,
+            "via_token": state.via_token,
+            "api_url": ctx.client.base(),
+        }));
+    }
+    let org = me
+        .org
+        .as_ref()
+        .map(|o| format!("{} ({})", o.name, o.slug))
+        .unwrap_or_else(|| "none. Run `times org use <slug>`".into());
+    ctx.out.fields(&[
+        ("Profile", ctx.profile.clone()),
+        ("User", me.user.display()),
+        ("Org", org),
+        (
+            "Auth",
+            if state.via_token {
+                "developer token".into()
+            } else {
+                "browser session".into()
+            },
+        ),
+        ("API", ctx.client.base().to_string()),
+    ]);
+    Ok(())
+}
+
+async fn refresh_cmd(ctx: &mut Ctx) -> anyhow::Result<()> {
+    let session = ctx.force_refresh().await?;
+    if ctx.out.json {
+        return ctx.out.json(&json!({
+            "profile": ctx.profile,
+            "user": session.user,
+            "org": session.org,
+            "api_url": ctx.client.base(),
+        }));
+    }
+    ctx.out.success("Session refreshed.");
+    ctx.out.fields(&[
+        ("Profile", ctx.profile.clone()),
+        ("User", session.user.display()),
+        (
+            "Org",
+            session
+                .org
+                .as_ref()
+                .map(|o| format!("{} ({})", o.name, o.slug))
+                .unwrap_or_else(|| "-".into()),
+        ),
+        ("API", ctx.client.base().to_string()),
+    ]);
+    Ok(())
+}
+
+fn list(ctx: &Ctx) -> anyhow::Result<()> {
+    let current = ctx.config.current_profile_name();
+    let mut names: BTreeSet<String> = ctx.config.profiles.keys().cloned().collect();
+    names.extend(ctx.store.names());
+    if names.is_empty() {
+        names.insert(current.clone());
+    }
+
+    let rows: Vec<Value> = names
+        .iter()
+        .map(|name| {
+            let meta = ctx.config.profile(name);
+            let (auth, user) = match ctx.store.load(name) {
+                Some(Credentials::Session { .. }) => {
+                    ("session", meta.user.clone().unwrap_or_else(|| "-".into()))
+                }
+                Some(Credentials::Token { .. }) => ("token", "-".into()),
+                None => ("signed_out", meta.user.unwrap_or_else(|| "-".into())),
+            };
+            json!({
+                "name": name,
+                "current": *name == current,
+                "auth": auth,
+                "user": if user == "-" { Value::Null } else { json!(user) },
+                "org_slug": meta.org_slug,
+                "api_url": meta.api_url,
+            })
+        })
+        .collect();
+
+    if ctx.out.json {
+        return ctx.out.json(&json!({
+            "current": current,
+            "profiles": rows,
+        }));
+    }
+
+    if names.iter().all(|n| ctx.store.load(n).is_none()) && ctx.config.profiles.is_empty() {
+        ctx.out
+            .info("No profiles yet. Sign in with `times auth login`.");
+        return Ok(());
+    }
+
+    let table = names
+        .iter()
+        .map(|name| {
+            let meta = ctx.config.profile(name);
+            let mark = if *name == current { "*" } else { "" };
+            let auth = match ctx.store.load(name) {
+                Some(Credentials::Session { .. }) => "session",
+                Some(Credentials::Token { .. }) => "token",
+                None => "signed out",
+            };
+            vec![
+                mark.to_string(),
+                name.clone(),
+                auth.to_string(),
+                or_dash(meta.user),
+                or_dash(meta.org_slug),
+            ]
+        })
+        .collect();
+    ctx.out
+        .table(&["", "profile", "auth", "user", "org"], table);
+    Ok(())
+}
+
+fn use_profile(ctx: &mut Ctx, name: &str) -> anyhow::Result<()> {
+    validate_profile_name(name)?;
+    ctx.config.set_current(name);
+    ctx.save_config()?;
+    let signed_in = ctx.store.load(name).is_some();
+    let meta = ctx.config.profile(name);
+
+    if ctx.out.json {
+        return ctx.out.json(&json!({
+            "profile": name,
+            "signed_in": signed_in,
+            "user": meta.user,
+            "org_slug": meta.org_slug,
+        }));
+    }
+    ctx.out.success(format!("Using profile `{name}`."));
+    if !signed_in {
+        ctx.out
+            .info("This profile is not signed in. Run `times auth login`.");
+    }
+    Ok(())
+}
+
+async fn delete(ctx: &mut Ctx, name: &str) -> anyhow::Result<()> {
+    validate_profile_name(name)?;
+    let known = ctx.config.profiles.contains_key(name) || ctx.store.load(name).is_some();
+    if !known {
+        return Err(CliError::usage(format!("No profile named `{name}`.")));
+    }
+    let signed_out = sign_out_profile(ctx, name).await?;
+    ctx.config.remove_profile(name);
+    ctx.save_config()?;
+    let current = ctx.config.current_profile_name();
+
+    if ctx.out.json {
+        return ctx.out.json(&json!({
+            "deleted": name,
+            "signed_out": signed_out,
+            "current": current,
+        }));
+    }
+    ctx.out.success(format!("Deleted profile `{name}`."));
+    if current != name {
+        ctx.out.info(format!("Current profile is `{current}`."));
+    }
+    Ok(())
+}
+
+async fn sign_out_profile(ctx: &mut Ctx, name: &str) -> anyhow::Result<bool> {
+    let creds = ctx.store.load(name);
     if let Some(Credentials::Session { refresh_token, .. }) = &creds {
         let result: anyhow::Result<Value> = ctx
             .client
@@ -230,81 +476,20 @@ pub async fn logout(ctx: &mut Ctx) -> anyhow::Result<()> {
                 .warn(format!("Could not end the session on the server: {e}"));
         }
     }
-    ctx.store.clear(&ctx.profile)?;
-    let name = ctx.profile.clone();
-    let profile = ctx.config.profile_mut(&name);
-    profile.user = None;
-    profile.org_id = None;
-    profile.org_slug = None;
-    ctx.save_config()?;
-
-    if ctx.out.json {
-        return ctx.out.json(&json!({ "signed_out": creds.is_some() }));
+    ctx.store.clear(name)?;
+    if let Some(p) = ctx.config.profiles.get_mut(name) {
+        p.user = None;
+        p.org_id = None;
+        p.org_slug = None;
     }
-    if creds.is_some() {
-        ctx.out.success("Signed out.");
-    } else {
-        ctx.out.info("You were not signed in.");
-    }
-    if ctx.env_token.is_some() {
-        ctx.out
-            .warn("TIMES_TOKEN is still set in your environment.");
-    }
-    Ok(())
+    Ok(creds.is_some())
 }
 
-pub async fn whoami(ctx: &mut Ctx) -> anyhow::Result<()> {
-    let state = ctx.authenticate().await?;
-    let me: anyhow::Result<DevMe> = ctx
-        .client
-        .get("/api/v1/auth/developer/me", Some(&state.access_token), &[])
-        .await;
-
-    let me = match me {
-        Ok(me) => me,
-        Err(_) if state.via_token => {
-            if ctx.out.json {
-                return ctx.out.json(&json!({
-                    "via_token": true,
-                    "org_id": state.org_id,
-                }));
-            }
-            ctx.out.fields(&[
-                ("Auth", "developer token".into()),
-                ("Org", state.org_id.unwrap_or_else(|| "-".into())),
-                ("API", ctx.client.base().to_string()),
-            ]);
-            return Ok(());
-        }
-        Err(e) => return Err(e),
-    };
-
-    if ctx.out.json {
-        return ctx.out.json(&json!({
-            "user": me.user,
-            "org": me.org,
-            "orgs": me.orgs,
-            "via_token": state.via_token,
-            "api_url": ctx.client.base(),
-        }));
+fn activate_profile(ctx: &mut Ctx) -> anyhow::Result<()> {
+    let name = ctx.profile.clone();
+    ctx.config.set_current(&name);
+    if let Some(url) = ctx.api_url_from_flag.clone() {
+        ctx.config.profile_mut(&name).api_url = Some(url);
     }
-    let org = me
-        .org
-        .as_ref()
-        .map(|o| format!("{} ({})", o.name, o.slug))
-        .unwrap_or_else(|| "none. Run `times org use <slug>`".into());
-    ctx.out.fields(&[
-        ("User", me.user.display()),
-        ("Org", org),
-        (
-            "Auth",
-            if state.via_token {
-                "developer token".into()
-            } else {
-                "browser session".into()
-            },
-        ),
-        ("API", ctx.client.base().to_string()),
-    ]);
-    Ok(())
+    ctx.save_config()
 }

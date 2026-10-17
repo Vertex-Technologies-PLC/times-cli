@@ -94,6 +94,10 @@ impl Store {
         }
         Ok(())
     }
+
+    pub fn names(&self) -> Vec<String> {
+        self.read_file().into_keys().collect()
+    }
 }
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]
@@ -167,6 +171,9 @@ mod tests {
         store.clear("default").unwrap();
         assert!(store.load("default").is_none());
         assert!(store.load("ci").is_some());
+        let mut names = store.names();
+        names.sort();
+        assert_eq!(names, vec!["ci".to_string()]);
         store.clear("ci").unwrap();
         assert!(!dir.path().join("credentials.json").exists());
     }

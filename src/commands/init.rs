@@ -88,17 +88,29 @@ pub struct Options {
     pub mode: Mode,
 }
 
+pub fn is_cwd_marker(p: &Path) -> bool {
+    matches!(p.to_str(), Some("." | "./" | ".\\"))
+}
+
+pub fn resolve_project_dir(cwd: &Path, dir_arg: Option<&Path>, slug: &str) -> PathBuf {
+    match dir_arg {
+        None => cwd.join(slug),
+        Some(d) if is_cwd_marker(d) => cwd.to_path_buf(),
+        Some(d) if d.is_absolute() => d.to_path_buf(),
+        Some(d) => cwd.join(d),
+    }
+}
+
+fn folder_name(p: &Path) -> String {
+    p.file_name()
+        .map(|s| s.to_string_lossy().into_owned())
+        .filter(|s| !s.is_empty() && s != "." && s != "..")
+        .unwrap_or_else(|| "my-aip".into())
+}
+
 pub fn run(out: &Output, args: InitArgs) -> anyhow::Result<()> {
     let cwd = std::env::current_dir()?;
-    let dir = match &args.dir {
-        Some(d) if d.is_absolute() => d.clone(),
-        Some(d) => cwd.join(d),
-        None => cwd.clone(),
-    };
-    let dir_name = dir
-        .file_name()
-        .map(|s| s.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "my-aip".into());
+    let in_place = args.dir.as_ref().is_some_and(|d| is_cwd_marker(d));
 
     let kind = match args.kind {
         Some(k) => k,
@@ -118,7 +130,21 @@ pub fn run(out: &Output, args: InitArgs) -> anyhow::Result<()> {
     };
     let mode = args.mode.unwrap_or(Mode::Platform);
 
-    let default_slug = slugify(&dir_name);
+    let default_slug = {
+        let raw = if in_place {
+            folder_name(&cwd)
+        } else if let Some(d) = &args.dir {
+            folder_name(d)
+        } else {
+            "my-aip".into()
+        };
+        let s = slugify(&raw);
+        if s.is_empty() {
+            "my-aip".into()
+        } else {
+            s
+        }
+    };
     let slug = match args.slug {
         Some(s) => s,
         None if out.interactive => out.text("Slug", &default_slug)?,
@@ -129,6 +155,7 @@ pub fn run(out: &Output, args: InitArgs) -> anyhow::Result<()> {
             "`{slug}` is not a valid slug. Use lowercase letters, digits and single hyphens, like invoice-reminders."
         )));
     }
+    let dir = resolve_project_dir(&cwd, args.dir.as_deref(), &slug);
     let name = match args.name {
         Some(n) => n,
         None if out.interactive => out.text("Name", &title_case(&slug))?,
@@ -540,6 +567,25 @@ mod tests {
             framework,
             mode,
         }
+    }
+
+    #[test]
+    fn resolve_dir_uses_slug_unless_dot() {
+        let cwd = Path::new("/work/integrations");
+        assert_eq!(
+            resolve_project_dir(cwd, None, "times-peachtree"),
+            PathBuf::from("/work/integrations/times-peachtree")
+        );
+        assert_eq!(
+            resolve_project_dir(cwd, Some(Path::new(".")), "times-peachtree"),
+            PathBuf::from("/work/integrations")
+        );
+        assert_eq!(
+            resolve_project_dir(cwd, Some(Path::new("custom")), "times-peachtree"),
+            PathBuf::from("/work/integrations/custom")
+        );
+        assert!(is_cwd_marker(Path::new(".")));
+        assert!(!is_cwd_marker(Path::new("times-peachtree")));
     }
 
     #[test]

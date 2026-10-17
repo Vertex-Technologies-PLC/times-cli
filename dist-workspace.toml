@@ -13,3 +13,7 @@ installers = ["shell", "powershell"]
 targets = ["aarch64-apple-darwin", "aarch64-unknown-linux-gnu", "x86_64-apple-darwin", "x86_64-unknown-linux-gnu", "x86_64-pc-windows-msvc"]
 # Where to host releases
 hosting = "github"
+# Install next to other user binaries, not rustup's CARGO_HOME
+install-path = "$HOME/.local/bin"
+# zsh and bash ship a builtin named times. The developers installer disables it.
+install-success-msg = "If `times` prints \"too many arguments\", the POSIX times builtin is winning. Fix: curl -fsSL https://developers.times.et/install.sh | sh"

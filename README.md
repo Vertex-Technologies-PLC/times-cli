@@ -10,6 +10,8 @@ macOS and Linux:
 curl -fsSL https://developers.times.et/install.sh | sh
 ```
 
+zsh and bash ship a builtin named `times`. The installer disables it in your shell config so this CLI can run. The binary stays `times`. If an existing terminal still prints `too many arguments`, run `. ~/.config/times/shellenv` or open a new terminal.
+
 Windows (PowerShell):
 
 ```powershell
@@ -27,7 +29,7 @@ cargo install --git https://github.com/Vertex-Technologies-PLC/times-cli
 ## Quick start
 
 ```sh
-times login
+times auth login
 times init my-app
 cd my-app
 bun install && bun run build
@@ -41,11 +43,13 @@ times aip submit
 
 | Command | What it does |
 | --- | --- |
-| `times login` | Sign in with your browser. `--token` signs in with a developer token. |
-| `times logout` | Sign out and remove stored credentials. |
-| `times whoami` | Show the signed in user and organization. |
+| `times auth login` | Sign in with your browser. `--token` signs in with a developer token. `--profile` names the account. |
+| `times auth logout` | Sign out of the current profile. |
+| `times auth whoami` | Show the signed in user, profile and organization. |
+| `times auth refresh` | Refresh the stored browser session. |
+| `times auth list` / `times auth use <name>` / `times auth delete <name>` | List, switch and remove profiles. |
 | `times org list` / `times org use <slug>` | List and switch organizations. |
-| `times init [name]` | Create a new AIP project. |
+| `times init [dir]` | Create a new AIP project. Creates a folder named after the slug unless `dir` is `.`. |
 | `times manifest validate` / `times manifest bump <level>` | Check or bump `times.aip.json`. |
 | `times dev` | Serve your build locally. |
 | `times aip list\|create\|info\|push\|submit\|status\|logs\|withdraw` | Manage AIPs and versions. |
@@ -54,6 +58,8 @@ times aip submit
 | `times payout list\|accounts\|request` | Withdrawals and payout accounts. |
 | `times token list\|create\|revoke` | Developer tokens for CI. |
 | `times completions <shell>` | Shell completions. |
+| `times setup-shell` | Disable the POSIX `times` builtin in your shell config. |
+| `times upgrade` | Install the latest CLI. |
 
 Global flags: `--json`, `--org <slug>`, `--api-url <url>`, `--profile <name>`, `--no-input`, `--yes`.
 
@@ -72,8 +78,9 @@ TIMES_TOKEN=tdk_... times aip push --no-input
 | `TIMES_TOKEN` | Developer token. Overrides stored credentials. |
 | `TIMES_API_URL` | API gateway. Default `https://api.times.et`. |
 | `TIMES_ORG` | Organization slug. |
-| `TIMES_PROFILE` | Credentials profile. |
+| `TIMES_PROFILE` | Credentials profile for this invocation. Does not change the saved current profile. |
 | `TIMES_NO_INPUT` | Never prompt. |
+| `TIMES_NO_UPDATE_CHECK` | Skip the GitHub version check. |
 | `TIMES_CONFIG_DIR` | Config directory. |
 | `TIMES_CREDENTIAL_STORE=file` | Store credentials in a file instead of the OS keychain. |
 

@@ -129,7 +129,7 @@ impl Ctx {
         }
 
         let creds = self.store.load(&self.profile).ok_or_else(|| {
-            CliError::auth("You are not signed in. Run `times login`, or set TIMES_TOKEN.")
+            CliError::auth("You are not signed in. Run `times auth login`, or set TIMES_TOKEN.")
         })?;
 
         match creds {
@@ -149,7 +149,9 @@ impl Ctx {
             } => {
                 if refresh_token_expires_at <= Utc::now() {
                     self.store.clear(&self.profile)?;
-                    return Err(CliError::auth("Your session expired. Run `times login`."));
+                    return Err(CliError::auth(
+                        "Your session expired. Run `times auth login`.",
+                    ));
                 }
                 let mut access = access_token;
                 let mut refresh_tok = refresh_token;
@@ -204,9 +206,55 @@ impl Ctx {
             Ok(s) => Ok(s),
             Err(e) if is_session_dead(&e) => {
                 self.store.clear(&self.profile)?;
-                Err(CliError::auth("Your session expired. Run `times login`."))
+                Err(CliError::auth(
+                    "Your session expired. Run `times auth login`.",
+                ))
             }
             Err(e) => Err(e),
+        }
+    }
+
+    pub async fn force_refresh(&mut self) -> anyhow::Result<DevSession> {
+        if self.env_token.is_some() {
+            return Err(CliError::usage(
+                "TIMES_TOKEN does not refresh. Unset it to use a stored session.",
+            ));
+        }
+        let creds = self.store.load(&self.profile).ok_or_else(|| {
+            CliError::auth("You are not signed in. Run `times auth login`, or set TIMES_TOKEN.")
+        })?;
+        match creds {
+            Credentials::Token { .. } => Err(CliError::usage(
+                "Developer tokens do not refresh. Run `times auth login` for a browser session.",
+            )),
+            Credentials::Session {
+                refresh_token,
+                refresh_token_expires_at,
+                org_id,
+                ..
+            } => {
+                if refresh_token_expires_at <= Utc::now() {
+                    self.store.clear(&self.profile)?;
+                    return Err(CliError::auth(
+                        "Your session expired. Run `times auth login`.",
+                    ));
+                }
+                let stored_org = org_id;
+                let config_org = self.config.profile(&self.profile).org_id;
+                let mut s = self.refresh_or_clear(&refresh_token, None).await?;
+                let desired = match self.org_override.clone() {
+                    Some(slug) => Some(self.org_id_for_slug(&s.access_token, &slug).await?),
+                    None => config_org.or(stored_org),
+                };
+                if let Some(want) = desired {
+                    if s.org.as_ref().map(|o| o.id.as_str()) != Some(want.as_str()) {
+                        s = self.refresh_or_clear(&s.refresh_token, Some(&want)).await?;
+                    }
+                }
+                remember_session(self, &s, true)?;
+                self.auth = None;
+                Ok(s)
+            }
         }
     }
 

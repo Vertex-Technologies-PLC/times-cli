@@ -60,7 +60,7 @@ async fn use_org(ctx: &mut Ctx, slug: &str) -> anyhow::Result<()> {
         Some(Credentials::Token { .. })
     ) {
         return Err(CliError::usage(
-            "You signed in with a developer token, which is bound to one organization. Run `times login` to switch.",
+            "You signed in with a developer token, which is bound to one organization. Run `times auth login` to switch.",
         ));
     }
     ctx.org_override = None;
@@ -68,7 +68,9 @@ async fn use_org(ctx: &mut Ctx, slug: &str) -> anyhow::Result<()> {
     let org_id = ctx.org_id_for_slug(&state.access_token, slug).await?;
 
     let Some(Credentials::Session { refresh_token, .. }) = ctx.store.load(&ctx.profile) else {
-        return Err(CliError::auth("You are not signed in. Run `times login`."));
+        return Err(CliError::auth(
+            "You are not signed in. Run `times auth login`.",
+        ));
     };
     let session =
         auth::select_org(&ctx.client, &state.access_token, &refresh_token, &org_id).await?;

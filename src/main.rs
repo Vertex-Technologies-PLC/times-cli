@@ -7,7 +7,9 @@ mod config;
 mod context;
 mod error;
 mod manifest;
+mod shell;
 mod ui;
+mod update;
 
 use clap::Parser;
 use console::style;

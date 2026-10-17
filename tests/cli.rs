@@ -29,6 +29,7 @@ impl Env {
             .env("TIMES_CONFIG_DIR", self.config.path())
             .env("TIMES_CREDENTIAL_STORE", "file")
             .env("TIMES_NO_INPUT", "1")
+            .env("TIMES_NO_UPDATE_CHECK", "1")
             .env_remove("TIMES_TOKEN")
             .env_remove("TIMES_ORG")
             .env_remove("TIMES_PROFILE");
@@ -127,6 +128,62 @@ fn submission(status: &str) -> Value {
     })
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn init_without_path_creates_slug_folder() {
+    let server = MockServer::start().await;
+    let env = Env::new(&server);
+    let out = env
+        .run(
+            env.work.path(),
+            &[
+                "init",
+                "--slug",
+                "times-peachtree",
+                "--kind",
+                "integration",
+                "--framework",
+                "static",
+                "--json",
+            ],
+            None,
+        )
+        .await;
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let v = stdout_json(&out);
+    assert_eq!(v["slug"], "times-peachtree");
+    let dir = env.work.path().join("times-peachtree");
+    assert!(dir.join("times.aip.json").exists());
+    assert!(!env.work.path().join("times.aip.json").exists());
+
+    let out = env
+        .run(
+            env.work.path(),
+            &[
+                "init",
+                ".",
+                "--slug",
+                "in-place",
+                "--kind",
+                "app",
+                "--framework",
+                "static",
+                "--json",
+            ],
+            None,
+        )
+        .await;
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(env.work.path().join("times.aip.json").exists());
+}
+
 async fn scaffold(env: &Env) -> PathBuf {
     let out = env
         .run(env.work.path(), &["init", "demo-app", "--json"], None)
@@ -189,7 +246,7 @@ async fn device_login_polls_then_selects_org() {
     let out = env
         .run(
             env.work.path(),
-            &["login", "--no-browser", "--org", "beta", "--json"],
+            &["auth", "login", "--no-browser", "--org", "beta", "--json"],
             None,
         )
         .await;
@@ -214,7 +271,9 @@ async fn device_login_polls_then_selects_org() {
         })))
         .mount(&server)
         .await;
-    let out = env.run(env.work.path(), &["whoami", "--json"], None).await;
+    let out = env
+        .run(env.work.path(), &["auth", "whoami", "--json"], None)
+        .await;
     assert!(
         out.status.success(),
         "{}",
@@ -240,7 +299,7 @@ async fn denied_login_exits_with_auth_code() {
         .mount(&server)
         .await;
     let out = env
-        .run(env.work.path(), &["login", "--no-browser"], None)
+        .run(env.work.path(), &["auth", "login", "--no-browser"], None)
         .await;
     assert_eq!(out.status.code(), Some(3));
 }
@@ -265,7 +324,7 @@ async fn org_use_resolves_slug_and_selects() {
         .mount(&server)
         .await;
     let out = env
-        .run(env.work.path(), &["login", "--no-browser"], None)
+        .run(env.work.path(), &["auth", "login", "--no-browser"], None)
         .await;
     assert!(
         out.status.success(),
@@ -559,6 +618,23 @@ async fn list_and_stats_print_json() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn setup_shell_print_disables_builtin() {
+    let server = MockServer::start().await;
+    let env = Env::new(&server);
+    let out = env
+        .run(env.work.path(), &["setup-shell", "--print"], None)
+        .await;
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("disable times"), "{stdout}");
+    assert!(stdout.contains("enable -n times"), "{stdout}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn init_and_validate_work_offline() {
     let server = MockServer::start().await;
     let env = Env::new(&server);
@@ -588,4 +664,208 @@ async fn init_and_validate_work_offline() {
         assert!(dir.join(format!("i18n/messages/{locale}.json")).exists());
     }
     assert!(server.received_requests().await.unwrap().is_empty());
+}
+
+async fn mock_device_login(server: &MockServer, org_value: Value, orgs: Value) {
+    Mock::given(method("POST"))
+        .and(path("/api/v1/auth/device/code"))
+        .respond_with(auth_ok(json!({
+            "device_code": "d", "user_code": "U", "verification_uri": "https://x", "interval": 1
+        })))
+        .mount(server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/api/v1/auth/device/token"))
+        .respond_with(auth_ok(session(org_value, orgs)))
+        .mount(server)
+        .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn profiles_switch_and_refresh() {
+    let server = MockServer::start().await;
+    let env = Env::new(&server);
+    mock_device_login(
+        &server,
+        org("org-2", "beta"),
+        json!([org("org-1", "acme"), org("org-2", "beta")]),
+    )
+    .await;
+    mock_pat(&server).await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/auth/developer/me"))
+        .and(header("authorization", "Bearer acc-1"))
+        .respond_with(auth_ok(json!({
+            "user": { "id": "u1", "email": "dev@example.com" },
+            "org": org("org-2", "beta"),
+            "orgs": [org("org-1", "acme"), org("org-2", "beta")]
+        })))
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/api/v1/auth/developer/refresh"))
+        .and(body_partial_json(json!({ "refresh_token": "ref-1" })))
+        .respond_with(auth_ok(json!({
+            "access_token": "acc-2",
+            "access_token_expires_at": "2099-01-01T00:00:00Z",
+            "refresh_token": "ref-2",
+            "refresh_token_expires_at": "2099-01-01T00:00:00Z",
+            "user": { "id": "u1", "email": "dev@example.com", "first_name": "Dev" },
+            "org": org("org-2", "beta"),
+            "orgs": [org("org-1", "acme"), org("org-2", "beta")]
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let out = env
+        .run(
+            env.work.path(),
+            &[
+                "auth",
+                "login",
+                "--no-browser",
+                "--profile",
+                "work",
+                "--json",
+            ],
+            None,
+        )
+        .await;
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(stdout_json(&out)["profile"], "work");
+    assert_eq!(stdout_json(&out)["org"]["slug"], "beta");
+
+    let out = env
+        .run(env.work.path(), &["auth", "whoami", "--json"], None)
+        .await;
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(stdout_json(&out)["profile"], "work");
+    assert_eq!(stdout_json(&out)["org"]["slug"], "beta");
+
+    let out = env
+        .run(
+            env.work.path(),
+            &[
+                "auth",
+                "login",
+                "--token",
+                "tdk_test",
+                "--profile",
+                "ci",
+                "--json",
+            ],
+            None,
+        )
+        .await;
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(stdout_json(&out)["profile"], "ci");
+
+    let out = env
+        .run(env.work.path(), &["auth", "list", "--json"], None)
+        .await;
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let listed = stdout_json(&out);
+    assert_eq!(listed["current"], "ci");
+    let names: Vec<&str> = listed["profiles"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| p["name"].as_str().unwrap())
+        .collect();
+    assert!(names.contains(&"work"));
+    assert!(names.contains(&"ci"));
+
+    let out = env
+        .run(
+            env.work.path(),
+            &["--profile", "work", "auth", "whoami", "--json"],
+            None,
+        )
+        .await;
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(stdout_json(&out)["profile"], "work");
+    assert_eq!(stdout_json(&out)["via_token"], false);
+
+    let out = env
+        .run(env.work.path(), &["auth", "whoami", "--json"], None)
+        .await;
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(stdout_json(&out)["profile"], "ci");
+    assert_eq!(stdout_json(&out)["via_token"], true);
+
+    let out = env
+        .run(env.work.path(), &["auth", "use", "work", "--json"], None)
+        .await;
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(stdout_json(&out)["profile"], "work");
+    assert_eq!(stdout_json(&out)["signed_in"], true);
+
+    let out = env
+        .run(env.work.path(), &["auth", "refresh", "--json"], None)
+        .await;
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(stdout_json(&out)["profile"], "work");
+    assert_eq!(stdout_json(&out)["org"]["slug"], "beta");
+
+    let out = env
+        .run(
+            env.work.path(),
+            &["--profile", "ci", "auth", "refresh"],
+            None,
+        )
+        .await;
+    assert_eq!(out.status.code(), Some(2));
+
+    let out = env
+        .run(env.work.path(), &["auth", "delete", "ci", "--json"], None)
+        .await;
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(stdout_json(&out)["deleted"], "ci");
+    assert_eq!(stdout_json(&out)["current"], "work");
+
+    let out = env
+        .run(
+            env.work.path(),
+            &["--profile", "has space", "auth", "list"],
+            None,
+        )
+        .await;
+    assert_eq!(out.status.code(), Some(2));
 }

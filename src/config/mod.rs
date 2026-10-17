@@ -5,6 +5,26 @@ use std::path::{Path, PathBuf};
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
 
+use crate::error::CliError;
+
+pub fn validate_profile_name(name: &str) -> anyhow::Result<()> {
+    let valid = !name.is_empty()
+        && name.len() <= 40
+        && name
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_alphanumeric())
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+    if !valid {
+        return Err(CliError::usage(
+            "Profile names use letters, digits, hyphens and underscores, up to 40 characters, and must start with a letter or digit.",
+        ));
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct Profile {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -19,6 +39,8 @@ pub struct Profile {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct Config {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current_profile: Option<String>,
     #[serde(default)]
     pub profiles: BTreeMap<String, Profile>,
 }
@@ -47,6 +69,27 @@ impl Config {
 
     pub fn profile_mut(&mut self, name: &str) -> &mut Profile {
         self.profiles.entry(name.to_string()).or_default()
+    }
+
+    pub fn current_profile_name(&self) -> String {
+        self.current_profile
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .unwrap_or("default")
+            .to_string()
+    }
+
+    pub fn set_current(&mut self, name: &str) {
+        self.current_profile = Some(name.to_string());
+        self.profiles.entry(name.to_string()).or_default();
+    }
+
+    pub fn remove_profile(&mut self, name: &str) {
+        self.profiles.remove(name);
+        if self.current_profile.as_deref() == Some(name) {
+            self.current_profile = self.profiles.keys().next().cloned();
+        }
     }
 }
 
@@ -102,6 +145,29 @@ mod tests {
         assert_eq!(loaded, cfg);
         assert_eq!(loaded.profile("default").org_slug.as_deref(), Some("acme"));
         assert_eq!(loaded.profile("missing"), Profile::default());
+    }
+
+    #[test]
+    fn current_profile_persists() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut cfg = Config::default();
+        cfg.set_current("work");
+        cfg.save(dir.path()).unwrap();
+        let loaded = Config::load(dir.path()).unwrap();
+        assert_eq!(loaded.current_profile_name(), "work");
+        cfg.remove_profile("work");
+        assert_eq!(cfg.current_profile, None);
+        assert_eq!(cfg.current_profile_name(), "default");
+    }
+
+    #[test]
+    fn profile_names_are_validated() {
+        assert!(validate_profile_name("default").is_ok());
+        assert!(validate_profile_name("work-1").is_ok());
+        assert!(validate_profile_name("ci_bot").is_ok());
+        assert!(validate_profile_name("").is_err());
+        assert!(validate_profile_name("-bad").is_err());
+        assert!(validate_profile_name("has space").is_err());
     }
 
     #[cfg(unix)]

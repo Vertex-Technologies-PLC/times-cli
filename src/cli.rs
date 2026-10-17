@@ -33,15 +33,9 @@ pub struct GlobalArgs {
     #[arg(long, global = true, value_name = "URL", env = "TIMES_API_URL")]
     pub api_url: Option<String>,
 
-    /// Use a named credentials profile
-    #[arg(
-        long,
-        global = true,
-        value_name = "NAME",
-        env = "TIMES_PROFILE",
-        default_value = "default"
-    )]
-    pub profile: String,
+    /// Named credential profile for this invocation
+    #[arg(long, global = true, value_name = "NAME", env = "TIMES_PROFILE")]
+    pub profile: Option<String>,
 
     /// Skip confirmation prompts
     #[arg(long, short = 'y', global = true)]
@@ -59,12 +53,9 @@ pub struct GlobalArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
-    /// Sign in with your browser, or with a developer token
-    Login(LoginArgs),
-    /// Sign out and remove stored credentials
-    Logout,
-    /// Show the signed in user and organization
-    Whoami,
+    /// Sign in, switch profiles, and inspect credentials
+    #[command(subcommand)]
+    Auth(AuthCmd),
     /// List and switch organizations
     #[command(subcommand)]
     Org(OrgCmd),
@@ -90,6 +81,35 @@ pub enum Command {
     Token(TokenCmd),
     /// Print shell completions
     Completions(CompletionsArgs),
+    /// Disable the POSIX times builtin in your shell config
+    SetupShell(SetupShellArgs),
+    /// Install the latest times CLI
+    #[command(alias = "self-upgrade")]
+    Upgrade,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum AuthCmd {
+    /// Sign in with your browser, or with a developer token
+    Login(LoginArgs),
+    /// Sign out of the current profile
+    Logout,
+    /// Show the signed in user, profile and organization
+    Whoami,
+    /// Refresh the stored browser session
+    Refresh,
+    /// List saved profiles
+    List,
+    /// Switch the current profile
+    Use {
+        /// Profile name
+        name: String,
+    },
+    /// Sign out and remove a profile
+    Delete {
+        /// Profile name
+        name: String,
+    },
 }
 
 #[derive(Debug, Args)]
@@ -165,7 +185,7 @@ impl Mode {
 
 #[derive(Debug, Args)]
 pub struct InitArgs {
-    /// Folder to create. Defaults to the current folder
+    /// Project folder. Pass `.` for the current folder. Defaults to a new folder named after the slug
     pub dir: Option<PathBuf>,
 
     #[arg(long, value_enum)]
@@ -340,4 +360,11 @@ pub enum TokenCmd {
 pub struct CompletionsArgs {
     #[arg(value_enum)]
     pub shell: clap_complete::Shell,
+}
+
+#[derive(Debug, Args)]
+pub struct SetupShellArgs {
+    /// Print the snippet instead of writing files
+    #[arg(long)]
+    pub print: bool,
 }

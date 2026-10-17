@@ -41,6 +41,10 @@ impl CliError {
         CliError::Validation(msg.into()).into()
     }
 
+    pub fn network(msg: impl Into<String>) -> anyhow::Error {
+        CliError::Network(msg.into()).into()
+    }
+
     pub fn exit_code(&self) -> i32 {
         match self {
             CliError::Usage(_) => exit::USAGE,
@@ -70,7 +74,7 @@ impl CliError {
     pub fn hint(&self) -> Option<&'static str> {
         match self {
             CliError::Api { code, .. } => hint_for(code),
-            CliError::Auth(_) => Some("Run `times login` to sign in."),
+            CliError::Auth(_) => Some("Run `times auth login` to sign in."),
             CliError::Network(_) => {
                 Some("Check your connection, or set TIMES_API_URL if you use a different gateway.")
             }
@@ -95,10 +99,10 @@ fn is_auth_code(code: &str) -> bool {
 pub fn hint_for(code: &str) -> Option<&'static str> {
     Some(match code {
         "AUTHORIZATION_REQUIRED" | "INVALID_ACCESS_TOKEN" | "UNAUTHORIZED" => {
-            "Your session is not valid. Run `times login`."
+            "Your session is not valid. Run `times auth login`."
         }
         "INVALID_REFRESH_TOKEN" | "REFRESH_TOKEN_REUSED" | "REFRESH_TOKEN_EXPIRED" => {
-            "Your session expired. Run `times login` again."
+            "Your session expired. Run `times auth login` again."
         }
         "INVALID_API_TOKEN" => {
             "The token is invalid, expired or revoked. Create a new one with `times token create`."
