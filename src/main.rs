@@ -25,6 +25,15 @@ use cli::Cli;
 use error::{exit, CliError};
 
 fn main() {
+    if update::is_internal_check() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("tokio runtime");
+        runtime.block_on(update::refresh_from_network());
+        return;
+    }
+
     let cli = Cli::parse();
     let json_mode = cli.global.json;
     let runtime = tokio::runtime::Builder::new_multi_thread()

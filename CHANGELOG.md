@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.1
+
+- `times upgrade` always asks GitHub for the latest release. A stale local cache can no longer claim you are current.
+- Other commands print a cached newer-version hint immediately, then refresh GitHub in the background (hourly while current, daily after an update is known). Commands are not blocked on the network.
+
 ## 0.4.0
 
 - `times aip push` runs `package.json` `build` when the TIMES-hosted output folder is missing. Pass `--no-build` in CI that already built.
