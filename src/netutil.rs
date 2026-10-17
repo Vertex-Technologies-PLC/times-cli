@@ -11,9 +11,8 @@ pub fn validate_probe_url(url: &str) -> anyhow::Result<reqwest::Url> {
 }
 
 fn validate_https_target(url: &str, resolve_dns: bool) -> anyhow::Result<reqwest::Url> {
-    let parsed = reqwest::Url::parse(url).map_err(|_| {
-        CliError::validation(format!("origin URL is not valid: {url}"))
-    })?;
+    let parsed = reqwest::Url::parse(url)
+        .map_err(|_| CliError::validation(format!("origin URL is not valid: {url}")))?;
     if parsed.scheme() != "https" {
         return Err(CliError::validation("origin URL must be https://").into());
     }
@@ -73,7 +72,11 @@ pub fn resolve_public_host(host: &str) -> anyhow::Result<()> {
 }
 
 pub fn looks_like_local_host(host: &str) -> bool {
-    let host = host.trim().trim_matches('[').trim_end_matches(']').to_ascii_lowercase();
+    let host = host
+        .trim()
+        .trim_matches('[')
+        .trim_end_matches(']')
+        .to_ascii_lowercase();
     host.is_empty()
         || host == "localhost"
         || host.ends_with(".localhost")
@@ -161,8 +164,10 @@ mod tests {
     #[test]
     fn resolve_rejects_loopback_host() {
         let err = resolve_public_host("localhost").unwrap_err();
-        assert!(err.to_string().to_ascii_lowercase().contains("private")
-            || err.to_string().to_ascii_lowercase().contains("link-local")
-            || err.to_string().to_ascii_lowercase().contains("localhost"));
+        assert!(
+            err.to_string().to_ascii_lowercase().contains("private")
+                || err.to_string().to_ascii_lowercase().contains("link-local")
+                || err.to_string().to_ascii_lowercase().contains("localhost")
+        );
     }
 }

@@ -80,7 +80,7 @@ TIMES_TOKEN=tdk_... times aip push --no-input
 | `TIMES_NO_INPUT` | Never prompt. |
 | `TIMES_NO_UPDATE_CHECK` | Skip the GitHub version check. |
 | `TIMES_CONFIG_DIR` | Config directory. |
-| `TIMES_CREDENTIAL_STORE=file` | Store credentials in a file instead of the OS keychain. |
+| `TIMES_CREDENTIAL_STORE=keyring` | Store credentials in the OS keychain (macOS/Windows). Default is `~/.config/times/credentials.json` (mode 0600). |
 
 ## Exit codes
 

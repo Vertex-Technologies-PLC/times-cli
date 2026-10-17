@@ -31,14 +31,16 @@ pub struct Store {
     use_keyring: bool,
 }
 
+fn use_keyring_pref(val: Option<&str>) -> bool {
+    cfg!(any(target_os = "macos", target_os = "windows"))
+        && val.is_some_and(|v| v.eq_ignore_ascii_case("keyring"))
+}
+
 impl Store {
     pub fn new(dir: &Path) -> Self {
-        let forced_file = std::env::var("TIMES_CREDENTIAL_STORE")
-            .map(|v| v.eq_ignore_ascii_case("file"))
-            .unwrap_or(false);
         Self {
             dir: dir.to_path_buf(),
-            use_keyring: cfg!(any(target_os = "macos", target_os = "windows")) && !forced_file,
+            use_keyring: use_keyring_pref(std::env::var("TIMES_CREDENTIAL_STORE").ok().as_deref()),
         }
     }
 
@@ -62,37 +64,45 @@ impl Store {
         write_private(&self.file(), serde_json::to_string_pretty(map)?.as_bytes())
     }
 
-    pub fn load(&self, profile: &str) -> Option<Credentials> {
-        if self.use_keyring {
-            if let Some(c) = keyring_get(profile) {
-                return Some(c);
-            }
-        }
-        self.read_file().remove(profile)
-    }
-
-    pub fn save(&self, profile: &str, creds: &Credentials) -> anyhow::Result<()> {
-        if self.use_keyring && keyring_set(profile, creds) {
-            let mut map = self.read_file();
-            if map.remove(profile).is_some() {
-                self.write_file(&map)?;
-            }
-            return Ok(());
-        }
+    fn write_profile_file(&self, profile: &str, creds: &Credentials) -> anyhow::Result<()> {
         let mut map = self.read_file();
         map.insert(profile.to_string(), creds.clone());
         self.write_file(&map)
     }
 
-    pub fn clear(&self, profile: &str) -> anyhow::Result<()> {
-        if self.use_keyring {
-            keyring_delete(profile);
-        }
+    fn remove_profile_file(&self, profile: &str) -> anyhow::Result<()> {
         let mut map = self.read_file();
         if map.remove(profile).is_some() {
             self.write_file(&map)?;
         }
         Ok(())
+    }
+
+    pub fn load(&self, profile: &str) -> Option<Credentials> {
+        if self.use_keyring {
+            if let Some(c) = keyring_get(profile) {
+                return Some(c);
+            }
+            return self.read_file().remove(profile);
+        }
+        if let Some(c) = self.read_file().remove(profile) {
+            return Some(c);
+        }
+        let c = keyring_get(profile)?;
+        let _ = self.write_profile_file(profile, &c);
+        Some(c)
+    }
+
+    pub fn save(&self, profile: &str, creds: &Credentials) -> anyhow::Result<()> {
+        if self.use_keyring && keyring_set(profile, creds) {
+            return self.remove_profile_file(profile);
+        }
+        self.write_profile_file(profile, creds)
+    }
+
+    pub fn clear(&self, profile: &str) -> anyhow::Result<()> {
+        keyring_delete(profile);
+        self.remove_profile_file(profile)
     }
 
     pub fn names(&self) -> Vec<String> {
@@ -146,6 +156,37 @@ mod tests {
             dir: dir.to_path_buf(),
             use_keyring: false,
         }
+    }
+
+    #[test]
+    fn keyring_only_when_requested() {
+        assert!(!use_keyring_pref(None));
+        assert!(!use_keyring_pref(Some("file")));
+        assert!(!use_keyring_pref(Some("FILE")));
+        assert_eq!(
+            use_keyring_pref(Some("keyring")),
+            cfg!(any(target_os = "macos", target_os = "windows"))
+        );
+        assert_eq!(
+            use_keyring_pref(Some("KEYRING")),
+            cfg!(any(target_os = "macos", target_os = "windows"))
+        );
+    }
+
+    #[test]
+    fn default_store_uses_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store {
+            dir: dir.path().to_path_buf(),
+            use_keyring: use_keyring_pref(None),
+        };
+        assert!(!store.use_keyring);
+        let tok = Credentials::Token {
+            token: "tdk_file".into(),
+        };
+        store.save("default", &tok).unwrap();
+        assert_eq!(store.load("default"), Some(tok));
+        assert!(dir.path().join("credentials.json").exists());
     }
 
     #[test]

@@ -972,7 +972,8 @@ async fn developer_hosted_push_skips_zip() {
     mock_pat(&server).await;
     let dir = scaffold(&env).await;
     let manifest_path = dir.join("times.aip.json");
-    let mut m: Value = serde_json::from_str(&std::fs::read_to_string(&manifest_path).unwrap()).unwrap();
+    let mut m: Value =
+        serde_json::from_str(&std::fs::read_to_string(&manifest_path).unwrap()).unwrap();
     m["hosting"] = json!({
         "provider": "developer",
         "entryUrl": "https://peachtree.example.com/"
@@ -1029,4 +1030,3 @@ async fn scan_fails_closed_on_eval() {
     );
     assert!(err.contains("EVAL") || err.contains("eval("), "{err}");
 }
-

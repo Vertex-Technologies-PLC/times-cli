@@ -301,13 +301,9 @@ pub enum AipCmd {
     /// Check auth, manifest, hosting and listing
     Doctor,
     /// Delete a draft AIP that was never published
-    Delete {
-        slug: Option<String>,
-    },
+    Delete { slug: Option<String> },
     /// Open the developers listing for this AIP
-    Open {
-        slug: Option<String>,
-    },
+    Open { slug: Option<String> },
     /// Probe a developer-hosted origin for framing
     #[command(subcommand)]
     Origin(OriginCmd),
@@ -356,9 +352,7 @@ pub enum OriginCmd {
 #[derive(Debug, Subcommand)]
 pub enum ListingCmd {
     /// Show the store listing
-    Get {
-        slug: Option<String>,
-    },
+    Get { slug: Option<String> },
     /// Create or replace the store listing
     Set {
         slug: Option<String>,

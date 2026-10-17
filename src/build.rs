@@ -43,9 +43,9 @@ pub fn ensure_output(root: &Path, no_build: bool) -> anyhow::Result<()> {
     let pump_err = std::thread::spawn(move || {
         let _ = io::copy(&mut stderr, &mut io::stderr());
     });
-    let status = child.wait().map_err(|e| {
-        CliError::network(format!("`{pm} run build` could not be waited on: {e}"))
-    })?;
+    let status = child
+        .wait()
+        .map_err(|e| CliError::network(format!("`{pm} run build` could not be waited on: {e}")))?;
     let _ = pump_out.join();
     let _ = pump_err.join();
     let _ = io::stderr().flush();

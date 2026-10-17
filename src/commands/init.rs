@@ -258,7 +258,9 @@ pub fn run(out: &Output, args: InitArgs) -> anyhow::Result<()> {
         HostingProvider::Developer => {
             out.info("  bun install");
             out.info("  bun run dev");
-            out.info("Set hosting.entryUrl to your production HTTPS origin before `times aip push`.");
+            out.info(
+                "Set hosting.entryUrl to your production HTTPS origin before `times aip push`.",
+            );
             out.info("  times aip origin check");
             out.info("  times aip push");
         }
@@ -295,8 +297,7 @@ fn resolve_hosting(
         "TIMES static export".to_string(),
         "I host it (public HTTPS)".into(),
     ];
-    Ok([HostingProvider::Times, HostingProvider::Developer]
-        [out.select("Hosting", opts)?])
+    Ok([HostingProvider::Times, HostingProvider::Developer][out.select("Hosting", opts)?])
 }
 
 fn display_dir(cwd: &Path, dir: &Path) -> String {

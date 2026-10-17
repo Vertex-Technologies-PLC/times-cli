@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.2
+
+- Credentials live in `~/.config/times/credentials.json` (mode 0600). macOS Keychain no longer prompts on every command. Existing Keychain sessions are copied to that file on first use.
+- `times aip doctor` reports auth from the stored session, not from whether an org is already selected.
+- Browser CLI sessions last 10 years and slide forward on refresh, matching GitHub `gh` OAuth tokens. Run `times auth logout` to end them. Set `TIMES_CREDENTIAL_STORE=keyring` to keep using the OS keychain.
+
 ## 0.4.1
 
 - `times upgrade` always asks GitHub for the latest release. A stale local cache can no longer claim you are current.

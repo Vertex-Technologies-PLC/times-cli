@@ -12,8 +12,23 @@ use crate::manifest;
 
 const SOURCE_ROOTS: &[&str] = &["src", "app", "public", "pages"];
 const ALLOWED_GUEST_EXT: &[&str] = &[
-    "html", "js", "mjs", "cjs", "css", "map", "svg", "json", "woff", "woff2", "png", "jpg", "jpeg",
-    "webp", "ico", "txt", "webmanifest",
+    "html",
+    "js",
+    "mjs",
+    "cjs",
+    "css",
+    "map",
+    "svg",
+    "json",
+    "woff",
+    "woff2",
+    "png",
+    "jpg",
+    "jpeg",
+    "webp",
+    "ico",
+    "txt",
+    "webmanifest",
 ];
 const DENIED_NAMES: &[&str] = &[
     ".env",
@@ -36,11 +51,7 @@ pub struct Finding {
     pub message: String,
 }
 
-pub fn run(
-    root: &Path,
-    packed: &[(String, PathBuf)],
-    hosting: &hosting::Hosting,
-) -> Vec<Finding> {
+pub fn run(root: &Path, packed: &[(String, PathBuf)], hosting: &hosting::Hosting) -> Vec<Finding> {
     let mut findings = Vec::new();
     scan_manifest(root, &mut findings);
     scan_source_trees(root, &mut findings);
@@ -140,7 +151,11 @@ fn scan_packed_files(packed: &[(String, PathBuf)], findings: &mut Vec<Finding>) 
             continue;
         }
         let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
-            findings.push(finding(archive_name, "PATH", "file name is not valid UTF-8"));
+            findings.push(finding(
+                archive_name,
+                "PATH",
+                "file name is not valid UTF-8",
+            ));
             continue;
         };
         if DENIED_NAMES.iter().any(|n| name.eq_ignore_ascii_case(n)) {
@@ -164,9 +179,7 @@ fn scan_packed_files(packed: &[(String, PathBuf)], findings: &mut Vec<Finding>) 
             ));
             continue;
         }
-        if !ext.is_empty()
-            && !ALLOWED_GUEST_EXT.contains(&ext.as_str())
-            && name != "times.aip.json"
+        if !ext.is_empty() && !ALLOWED_GUEST_EXT.contains(&ext.as_str()) && name != "times.aip.json"
         {
             findings.push(finding(
                 archive_name,
@@ -465,7 +478,10 @@ fn html_attr(tag: &str, attr: &str) -> Option<String> {
 
 fn attr_is_remote(value: &str) -> bool {
     let v = value.trim();
-    v.starts_with("https://") || v.starts_with("http://") || v.starts_with("//") || v.starts_with("data:")
+    v.starts_with("https://")
+        || v.starts_with("http://")
+        || v.starts_with("//")
+        || v.starts_with("data:")
 }
 
 fn has_html_event_handler(html: &str) -> bool {
@@ -568,7 +584,11 @@ fn looks_connection_string(text: &str) -> bool {
         || lower.contains("redis://")
 }
 
-fn finding(path: impl Into<String>, rule: impl Into<String>, message: impl Into<String>) -> Finding {
+fn finding(
+    path: impl Into<String>,
+    rule: impl Into<String>,
+    message: impl Into<String>,
+) -> Finding {
     Finding {
         path: path.into(),
         rule: rule.into(),
@@ -588,7 +608,10 @@ fn truncate(s: &str, n: usize) -> String {
     if s.chars().count() <= n {
         s.to_string()
     } else {
-        format!("{}...", s.chars().take(n.saturating_sub(3)).collect::<String>())
+        format!(
+            "{}...",
+            s.chars().take(n.saturating_sub(3)).collect::<String>()
+        )
     }
 }
 
@@ -630,7 +653,9 @@ mod tests {
             entry_url: Some("https://example.com/".into()),
         };
         let findings = run(dir.path(), &[], &hosting);
-        assert!(!findings.iter().any(|f| f.rule == "EVAL" || f.rule == "FUNCTION"));
+        assert!(!findings
+            .iter()
+            .any(|f| f.rule == "EVAL" || f.rule == "FUNCTION"));
     }
 
     #[test]

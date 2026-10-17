@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use reqwest::header::{CONTENT_TYPE, HeaderMap};
+use reqwest::header::{HeaderMap, CONTENT_TYPE};
 use reqwest::redirect::Policy;
 
 use crate::error::CliError;
@@ -65,9 +65,7 @@ pub fn evaluate_origin_response(
         errors.push(format!("expected HTTP 200, got {status}"));
     }
     if !content_type.to_ascii_lowercase().contains("html") && !looks_like_html(body) {
-        errors.push(format!(
-            "expected HTML, got content-type {content_type:?}"
-        ));
+        errors.push(format!("expected HTML, got content-type {content_type:?}"));
     }
     if let Some(xfo) = xfo.as_deref() {
         let v = xfo.trim().to_ascii_uppercase();

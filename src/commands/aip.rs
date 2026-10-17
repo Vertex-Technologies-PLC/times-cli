@@ -256,11 +256,7 @@ async fn push(
         }
         None => {
             let url = hosting.entry_url.clone().unwrap_or_default();
-            (
-                push_state::hash_developer(&url, m),
-                0,
-                None,
-            )
+            (push_state::hash_developer(&url, m), 0, None)
         }
     };
 
@@ -386,7 +382,11 @@ async fn upsert_version(
     let create = json!({ "version": version, "manifest": m, "changelog": changelog });
     let created: anyhow::Result<Submission> = ctx
         .client
-        .post(&format!("{}/versions", aip_path(slug)), Some(token), &create)
+        .post(
+            &format!("{}/versions", aip_path(slug)),
+            Some(token),
+            &create,
+        )
         .await;
     match created {
         Ok(sub) => Ok(sub),
@@ -630,7 +630,8 @@ async fn scan_only(ctx: &mut Ctx) -> anyhow::Result<()> {
     let loaded = load_manifest()?;
     require_valid_manifest(ctx, &loaded)?;
     let hosting = hosting::resolve(&loaded.value)?;
-    let packed = if hosting.needs_bundle(&loaded.value) && !hosting::output_dir_missing(&loaded.root, &loaded.value)
+    let packed = if hosting.needs_bundle(&loaded.value)
+        && !hosting::output_dir_missing(&loaded.root, &loaded.value)
     {
         Some(bundle::collect(&loaded.root, &loaded.value, None)?)
     } else {
@@ -655,10 +656,10 @@ async fn scan_only(ctx: &mut Ctx) -> anyhow::Result<()> {
 
 async fn doctor(ctx: &mut Ctx) -> anyhow::Result<()> {
     let mut rows = Vec::new();
-    let token = match ctx.erp_token().await {
-        Ok(t) => {
+    let token = match ctx.authenticate().await {
+        Ok(state) => {
             rows.push(("auth", "ok".into()));
-            Some(t)
+            Some(state.access_token)
         }
         Err(e) => {
             rows.push(("auth", e.to_string()));
@@ -709,7 +710,9 @@ async fn doctor(ctx: &mut Ctx) -> anyhow::Result<()> {
                 )),
                 Err(e) => rows.push(("hosting", e.to_string())),
             }
-            let slug = str_at(&loaded.value, "/slug").unwrap_or_default().to_string();
+            let slug = str_at(&loaded.value, "/slug")
+                .unwrap_or_default()
+                .to_string();
             if let Some(token) = token.as_deref() {
                 match ctx
                     .client
@@ -789,11 +792,9 @@ async fn origin_check(ctx: &mut Ctx, url: Option<String>) -> anyhow::Result<()> 
         Some(u) => u,
         None => {
             let loaded = load_manifest()?;
-            hosting::resolve(&loaded.value)?
-                .entry_url
-                .ok_or_else(|| {
-                    CliError::usage("Pass a URL, or set hosting.entryUrl in times.aip.json.")
-                })?
+            hosting::resolve(&loaded.value)?.entry_url.ok_or_else(|| {
+                CliError::usage("Pass a URL, or set hosting.entryUrl in times.aip.json.")
+            })?
         }
     };
     let report = crate::origin::probe(&url).await?;

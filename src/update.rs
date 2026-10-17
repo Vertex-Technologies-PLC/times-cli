@@ -28,10 +28,7 @@ pub(crate) struct Cache {
 }
 
 enum RemoteLatest {
-    Fresh {
-        tag: String,
-        etag: Option<String>,
-    },
+    Fresh { tag: String, etag: Option<String> },
     NotModified,
     Failed,
 }
