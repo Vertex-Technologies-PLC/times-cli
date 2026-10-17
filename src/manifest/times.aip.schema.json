@@ -42,6 +42,20 @@
       "type": "string",
       "enum": ["platform", "runtime"]
     },
+    "hosting": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider"],
+      "properties": {
+        "provider": {
+          "type": "string",
+          "enum": ["times", "developer"]
+        },
+        "entryUrl": {
+          "type": ["string", "null"]
+        }
+      }
+    },
     "ui": {
       "type": "object",
       "required": ["uses_times_tokens", "runtime", "surfaces", "entry"],
@@ -257,6 +271,31 @@
         "properties": {
           "runtime": {
             "required": ["workerUrl"]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": ["hosting"],
+        "properties": {
+          "hosting": {
+            "properties": { "provider": { "const": "developer" } },
+            "required": ["provider"]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "hosting": {
+            "required": ["provider", "entryUrl"],
+            "properties": {
+              "entryUrl": {
+                "type": "string",
+                "minLength": 8,
+                "pattern": "^https://"
+              }
+            }
           }
         }
       }

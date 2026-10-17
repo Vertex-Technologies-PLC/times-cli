@@ -196,6 +196,8 @@ pub struct Submission {
     #[serde(default)]
     pub cdn_url: Option<String>,
     #[serde(default)]
+    pub origin_verified_at: Option<String>,
+    #[serde(default)]
     pub submitted_at: Option<String>,
     #[serde(default)]
     pub reviewed_at: Option<String>,
@@ -228,6 +230,41 @@ pub struct SubmissionDetail {
     pub submission: Submission,
     #[serde(default)]
     pub events: Vec<SubmissionEvent>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct Listing {
+    #[serde(default)]
+    pub slug: String,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub summary: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub category: String,
+    #[serde(default)]
+    pub pricing: String,
+    #[serde(default)]
+    pub logo_url: Option<String>,
+    #[serde(default)]
+    pub screenshots: Vec<String>,
+    #[serde(default)]
+    pub support_url: Option<String>,
+    #[serde(default)]
+    pub privacy_url: Option<String>,
+    #[serde(default)]
+    pub website_url: Option<String>,
+    #[serde(default)]
+    pub price_etb: Option<f64>,
+    #[serde(default)]
+    pub billing_period: Option<String>,
+    #[serde(default)]
+    pub trial_days: Option<i64>,
+    #[serde(default)]
+    pub member_slugs: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

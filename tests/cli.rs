@@ -869,3 +869,164 @@ async fn profiles_switch_and_refresh() {
         .await;
     assert_eq!(out.status.code(), Some(2));
 }
+
+async fn mock_times_push(server: &MockServer, upload_path: &str) {
+    let base = "/api/v1/developers/aips/demo-app";
+    Mock::given(method("POST"))
+        .and(path(format!("{base}/versions")))
+        .respond_with(erp_ok(201, submission("draft")))
+        .mount(server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path(format!("{base}/versions/1.0.0/bundle-upload-url")))
+        .respond_with(erp_ok(
+            201,
+            json!({
+                "bundleId": "7d7f7c3e-0000-4000-8000-000000000001",
+                "uploadUrl": format!("{}{}", server.uri(), upload_path),
+                "contentType": "application/zip",
+                "maxBytes": 52428800,
+                "expiresInSeconds": 900
+            }),
+        ))
+        .mount(server)
+        .await;
+    Mock::given(method("PUT"))
+        .and(path(upload_path))
+        .respond_with(ResponseTemplate::new(200))
+        .mount(server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path(format!("{base}/versions/1.0.0/bundle-complete")))
+        .respond_with(erp_ok(200, submission("uploaded")))
+        .mount(server)
+        .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn push_runs_build_when_dist_is_missing() {
+    let server = MockServer::start().await;
+    let env = Env::new(&server);
+    mock_pat(&server).await;
+    mock_times_push(&server, "/upload/build").await;
+    let dir = scaffold(&env).await;
+    std::fs::remove_dir_all(dir.join("dist")).unwrap();
+    std::fs::write(
+        dir.join("package.json"),
+        r#"{"name":"demo-app","scripts":{"build":"node -e \"require('fs').mkdirSync('dist',{recursive:true});require('fs').writeFileSync('dist/index.html','<!doctype html><p>built</p>')\""}}"#,
+    )
+    .unwrap();
+
+    let out = env
+        .run(&dir, &["aip", "push", "--json"], Some("tdk_test"))
+        .await;
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(dir.join("dist/index.html").is_file());
+    assert_eq!(stdout_json(&out)["status"], "uploaded");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn push_skips_when_hash_unchanged() {
+    let server = MockServer::start().await;
+    let env = Env::new(&server);
+    mock_pat(&server).await;
+    mock_times_push(&server, "/upload/skip").await;
+    let dir = scaffold(&env).await;
+
+    let first = env
+        .run(&dir, &["aip", "push", "--json"], Some("tdk_test"))
+        .await;
+    assert!(
+        first.status.success(),
+        "{}",
+        String::from_utf8_lossy(&first.stderr)
+    );
+
+    let second = env
+        .run(&dir, &["aip", "push", "--json"], Some("tdk_test"))
+        .await;
+    assert!(
+        second.status.success(),
+        "{}",
+        String::from_utf8_lossy(&second.stderr)
+    );
+    assert_eq!(stdout_json(&second)["unchanged"], true);
+    let puts = server
+        .received_requests()
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|r| r.method.as_str() == "PUT")
+        .count();
+    assert_eq!(puts, 1);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn developer_hosted_push_skips_zip() {
+    let server = MockServer::start().await;
+    let env = Env::new(&server);
+    mock_pat(&server).await;
+    let dir = scaffold(&env).await;
+    let manifest_path = dir.join("times.aip.json");
+    let mut m: Value = serde_json::from_str(&std::fs::read_to_string(&manifest_path).unwrap()).unwrap();
+    m["hosting"] = json!({
+        "provider": "developer",
+        "entryUrl": "https://peachtree.example.com/"
+    });
+    m["ui"]["entry"] = json!("https://peachtree.example.com/");
+    std::fs::write(&manifest_path, serde_json::to_string_pretty(&m).unwrap()).unwrap();
+
+    Mock::given(method("POST"))
+        .and(path("/api/v1/developers/aips/demo-app/versions"))
+        .respond_with(erp_ok(
+            201,
+            json!({
+                "id": "sub-1", "slug": "demo-app", "version": "1.0.0", "status": "uploaded",
+                "scanStatus": "passed", "originVerifiedAt": "2026-10-17T10:00:00Z"
+            }),
+        ))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let out = env
+        .run(
+            &dir,
+            &["aip", "push", "--skip-probe", "--json"],
+            Some("tdk_test"),
+        )
+        .await;
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(stdout_json(&out)["status"], "uploaded");
+    let requests = server.received_requests().await.unwrap();
+    assert!(requests.iter().all(|r| r.method.as_str() != "PUT"));
+    assert!(requests
+        .iter()
+        .all(|r| !r.url.path().contains("bundle-upload-url")));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn scan_fails_closed_on_eval() {
+    let server = MockServer::start().await;
+    let env = Env::new(&server);
+    let dir = scaffold(&env).await;
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(dir.join("src/evil.ts"), "eval('alert(1)');\n").unwrap();
+    let out = env.run(&dir, &["aip", "scan"], None).await;
+    assert_eq!(out.status.code(), Some(5));
+    let err = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(err.contains("EVAL") || err.contains("eval("), "{err}");
+}
+

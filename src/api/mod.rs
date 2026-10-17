@@ -110,6 +110,16 @@ impl Client {
             .await
     }
 
+    pub async fn put<T: DeserializeOwned, B: Serialize>(
+        &self,
+        path: &str,
+        token: Option<&str>,
+        body: &B,
+    ) -> anyhow::Result<T> {
+        let body = serde_json::to_value(body)?;
+        self.send(Method::PUT, path, token, &[], Some(&body)).await
+    }
+
     pub async fn delete<T: DeserializeOwned>(
         &self,
         path: &str,

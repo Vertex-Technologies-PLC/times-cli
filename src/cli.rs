@@ -183,6 +183,21 @@ impl Mode {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum HostingProvider {
+    Times,
+    Developer,
+}
+
+impl HostingProvider {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            HostingProvider::Times => "times",
+            HostingProvider::Developer => "developer",
+        }
+    }
+}
+
 #[derive(Debug, Args)]
 pub struct InitArgs {
     /// Project folder. Pass `.` for the current folder. Defaults to a new folder named after the slug
@@ -208,6 +223,14 @@ pub struct InitArgs {
     /// Overwrite files that already exist
     #[arg(long)]
     pub force: bool,
+
+    /// Who serves the guest: TIMES (static zip) or you (public HTTPS)
+    #[arg(long, value_enum)]
+    pub hosting: Option<HostingProvider>,
+
+    /// Public HTTPS origin when --hosting developer
+    #[arg(long, value_name = "URL")]
+    pub entry_url: Option<String>,
 }
 
 #[derive(Debug, Subcommand)]
@@ -238,6 +261,10 @@ pub struct DevArgs {
 
     #[arg(long, default_value = "127.0.0.1")]
     pub host: String,
+
+    /// Do not run package.json build if the output folder is missing
+    #[arg(long)]
+    pub no_build: bool,
 }
 
 #[derive(Debug, Subcommand)]
@@ -253,10 +280,40 @@ pub enum AipCmd {
     },
     /// Bundle and upload the current version
     Push {
-        /// Build folder. Defaults to the folder of ui.entry
+        /// Build output folder. Defaults to the folder of ui.entry. Not the project root
         #[arg(long)]
         dir: Option<String>,
+        /// Do not run package.json build if the output folder is missing
+        #[arg(long)]
+        no_build: bool,
+        /// Upload even if .times/push-state.json matches
+        #[arg(long)]
+        force: bool,
+        /// Submit for review after a successful push
+        #[arg(long)]
+        submit: bool,
+        /// Skip the live origin probe (CI only, after you already probed)
+        #[arg(long)]
+        skip_probe: bool,
     },
+    /// Scan the project without uploading
+    Scan,
+    /// Check auth, manifest, hosting and listing
+    Doctor,
+    /// Delete a draft AIP that was never published
+    Delete {
+        slug: Option<String>,
+    },
+    /// Open the developers listing for this AIP
+    Open {
+        slug: Option<String>,
+    },
+    /// Probe a developer-hosted origin for framing
+    #[command(subcommand)]
+    Origin(OriginCmd),
+    /// Get or set the store listing
+    #[command(subcommand)]
+    Listing(ListingCmd),
     /// Submit the current version for review
     Submit {
         /// Release notes for reviewers
@@ -278,11 +335,51 @@ pub enum AipCmd {
         #[arg(long)]
         slug: Option<String>,
     },
-    /// Show the review history of a version
+    /// Show the review history of a version (not guest runtime logs)
+    #[command(visible_alias = "events")]
     Logs {
         slug: Option<String>,
         #[arg(long)]
         version: Option<String>,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum OriginCmd {
+    /// GET the origin and require frame-ancestors for app.times.et
+    Check {
+        /// Defaults to hosting.entryUrl in times.aip.json
+        url: Option<String>,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ListingCmd {
+    /// Show the store listing
+    Get {
+        slug: Option<String>,
+    },
+    /// Create or replace the store listing
+    Set {
+        slug: Option<String>,
+        #[arg(long)]
+        name: Option<String>,
+        #[arg(long)]
+        summary: Option<String>,
+        #[arg(long)]
+        description: Option<String>,
+        #[arg(long)]
+        category: Option<String>,
+        #[arg(long)]
+        pricing: Option<String>,
+        #[arg(long)]
+        logo_url: Option<String>,
+        #[arg(long)]
+        support_url: Option<String>,
+        #[arg(long)]
+        privacy_url: Option<String>,
+        #[arg(long)]
+        website_url: Option<String>,
     },
 }
 

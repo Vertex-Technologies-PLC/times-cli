@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use anyhow::Context;
 use serde_json::{json, Value};
 
-use crate::cli::{Framework, InitArgs, Kind, Mode};
+use crate::cli::{Framework, HostingProvider, InitArgs, Kind, Mode};
 use crate::error::CliError;
 use crate::manifest::{self, bump, LOCALES, MANIFEST_FILE};
 use crate::ui::Output;
@@ -86,6 +86,8 @@ pub struct Options {
     pub kind: Kind,
     pub framework: Framework,
     pub mode: Mode,
+    pub hosting: HostingProvider,
+    pub entry_url: Option<String>,
 }
 
 pub fn is_cwd_marker(p: &Path) -> bool {
@@ -129,6 +131,29 @@ pub fn run(out: &Output, args: InitArgs) -> anyhow::Result<()> {
         None => Framework::Vite,
     };
     let mode = args.mode.unwrap_or(Mode::Platform);
+    let hosting = resolve_hosting(out, framework, args.hosting)?;
+    let entry_url = match hosting {
+        HostingProvider::Developer => {
+            let default = args
+                .entry_url
+                .clone()
+                .unwrap_or_else(|| "https://your-app.example.com/".into());
+            let url = if args.entry_url.is_some() {
+                default
+            } else if out.interactive {
+                out.text("Public HTTPS origin", &default)?
+            } else {
+                default
+            };
+            if !manifest::is_public_https(&url) {
+                return Err(CliError::usage(
+                    "hosting.entryUrl must be a public https:// URL (no localhost).",
+                ));
+            }
+            Some(url)
+        }
+        HostingProvider::Times => None,
+    };
 
     let default_slug = {
         let raw = if in_place {
@@ -168,6 +193,8 @@ pub fn run(out: &Output, args: InitArgs) -> anyhow::Result<()> {
         kind,
         framework,
         mode,
+        hosting,
+        entry_url,
     };
     let files = scaffold(&opts);
 
@@ -207,6 +234,7 @@ pub fn run(out: &Output, args: InitArgs) -> anyhow::Result<()> {
             "kind": opts.kind.as_str(),
             "framework": opts.framework.as_str(),
             "mode": opts.mode.as_str(),
+            "hosting": opts.hosting.as_str(),
             "files": files.iter().map(|(p, _)| p).collect::<Vec<_>>(),
         }));
     }
@@ -226,15 +254,49 @@ pub fn run(out: &Output, args: InitArgs) -> anyhow::Result<()> {
     if dir != cwd {
         out.info(format!("  cd {}", display_dir(&cwd, &dir)));
     }
-    match opts.framework {
-        Framework::Static => {}
-        _ => {
+    match opts.hosting {
+        HostingProvider::Developer => {
             out.info("  bun install");
-            out.info("  bun run build");
+            out.info("  bun run dev");
+            out.info("Set hosting.entryUrl to your production HTTPS origin before `times aip push`.");
+            out.info("  times aip origin check");
+            out.info("  times aip push");
+        }
+        HostingProvider::Times => {
+            match opts.framework {
+                Framework::Static => {}
+                _ => {
+                    out.info("  bun install");
+                    out.info("  bun run build");
+                }
+            }
+            out.info("  times dev");
+            out.info("  times aip push");
         }
     }
-    out.info("  times dev");
     Ok(())
+}
+
+fn resolve_hosting(
+    out: &Output,
+    framework: Framework,
+    explicit: Option<HostingProvider>,
+) -> anyhow::Result<HostingProvider> {
+    if let Some(h) = explicit {
+        return Ok(h);
+    }
+    if framework != Framework::Next {
+        return Ok(HostingProvider::Times);
+    }
+    if !out.interactive {
+        return Ok(HostingProvider::Times);
+    }
+    let opts = vec![
+        "TIMES static export".to_string(),
+        "I host it (public HTTPS)".into(),
+    ];
+    Ok([HostingProvider::Times, HostingProvider::Developer]
+        [out.select("Hosting", opts)?])
 }
 
 fn display_dir(cwd: &Path, dir: &Path) -> String {
@@ -247,11 +309,17 @@ fn display_dir(cwd: &Path, dir: &Path) -> String {
         .to_string()
 }
 
-fn entry_for(framework: Framework) -> &'static str {
-    match framework {
-        Framework::Vite => "./dist/index.html",
-        Framework::Next => "./out/index.html",
-        Framework::Static => "./index.html",
+fn entry_for(o: &Options) -> String {
+    if o.hosting == HostingProvider::Developer {
+        return o
+            .entry_url
+            .clone()
+            .unwrap_or_else(|| "https://your-app.example.com/".into());
+    }
+    match o.framework {
+        Framework::Vite => "./dist/index.html".into(),
+        Framework::Next => "./out/index.html".into(),
+        Framework::Static => "./index.html".into(),
     }
 }
 
@@ -268,11 +336,12 @@ pub fn manifest_json(o: &Options) -> Value {
         "version": "1.0.0",
         "name": o.name,
         "mode": o.mode.as_str(),
+        "hosting": hosting_json(o),
         "ui": {
             "framework": o.framework.as_str(),
             "runtime": "iframe",
             "surfaces": surfaces,
-            "entry": entry_for(o.framework),
+            "entry": entry_for(o),
             "icon": "./icon.svg",
             "uses_times_tokens": true
         },
@@ -303,6 +372,16 @@ pub fn manifest_json(o: &Options) -> Value {
     m
 }
 
+fn hosting_json(o: &Options) -> Value {
+    match o.hosting {
+        HostingProvider::Developer => json!({
+            "provider": "developer",
+            "entryUrl": o.entry_url.as_deref().unwrap_or("https://your-app.example.com/")
+        }),
+        HostingProvider::Times => json!({ "provider": "times" }),
+    }
+}
+
 fn catalog(locale: &str, name: &str) -> String {
     let c = copy(locale);
     let v = json!({
@@ -322,7 +401,7 @@ fn pretty(v: &Value) -> String {
 const ICON: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="14" fill="#2563eb"/><path d="M20 22h24v6H35v16h-6V28h-9z" fill="#fff"/></svg>
 "##;
 
-const GITIGNORE: &str = "node_modules\ndist\nout\n.next\n*.zip\n.DS_Store\n";
+const GITIGNORE: &str = "node_modules\ndist\nout\n.next\n*.zip\n.DS_Store\n.times/\n";
 
 const MAIN_TS: &str = r#"import '@times/aip-sdk/tokens.css';
 import './style.css';
@@ -338,7 +417,11 @@ const app = document.querySelector<HTMLDivElement>('#app')!;
 client.waitForInit().then(() => {
   const t = client.t;
   client.setTitle(t('meta.name'));
-  app.innerHTML = `<h1>${t('home.title')}</h1><p>${t('home.body')}</p>`;
+  const heading = document.createElement('h1');
+  heading.textContent = t('home.title');
+  const body = document.createElement('p');
+  body.textContent = t('home.body');
+  app.replaceChildren(heading, body);
   client.ready('1.0.0');
 });
 "#;
@@ -406,6 +489,27 @@ const nextConfig = {
   output: 'export',
   assetPrefix: './',
   images: { unoptimized: true }
+};
+
+export default nextConfig;
+"#;
+
+const NEXT_CONFIG_DEVELOPER: &str = r#"/** @type {import('next').NextConfig} */
+const nextConfig = {
+  images: { unoptimized: true },
+  async headers() {
+    return [
+      {
+        source: '/:path*',
+        headers: [
+          {
+            key: 'Content-Security-Policy',
+            value: 'frame-ancestors https://app.times.et https://*.times.et'
+          }
+        ]
+      }
+    ];
+  }
 };
 
 export default nextConfig;
@@ -539,7 +643,14 @@ pub fn scaffold(o: &Options) -> Vec<(String, String)> {
                 }
             });
             files.push(("package.json".into(), pretty(&pkg)));
-            files.push(("next.config.mjs".into(), NEXT_CONFIG.into()));
+            files.push((
+                "next.config.mjs".into(),
+                if o.hosting == HostingProvider::Developer {
+                    NEXT_CONFIG_DEVELOPER.into()
+                } else {
+                    NEXT_CONFIG.into()
+                },
+            ));
             files.push(("tsconfig.json".into(), TSCONFIG_NEXT.into()));
             files.push(("app/layout.tsx".into(), NEXT_LAYOUT.into()));
             files.push(("app/page.tsx".into(), NEXT_PAGE.into()));
@@ -566,6 +677,8 @@ mod tests {
             kind,
             framework,
             mode,
+            hosting: HostingProvider::Times,
+            entry_url: None,
         }
     }
 
@@ -618,6 +731,28 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn developer_next_uses_origin_and_csp() {
+        let o = Options {
+            slug: "peachtree".into(),
+            name: "Peachtree".into(),
+            kind: Kind::App,
+            framework: Framework::Next,
+            mode: Mode::Platform,
+            hosting: HostingProvider::Developer,
+            entry_url: Some("https://peachtree.example.com/".into()),
+        };
+        let files: std::collections::BTreeMap<_, _> = scaffold(&o).into_iter().collect();
+        let m: Value = serde_json::from_str(&files["times.aip.json"]).unwrap();
+        assert_eq!(m["hosting"]["provider"], "developer");
+        assert_eq!(m["hosting"]["entryUrl"], "https://peachtree.example.com/");
+        assert_eq!(m["ui"]["entry"], "https://peachtree.example.com/");
+        assert!(files["next.config.mjs"].contains("frame-ancestors"));
+        assert!(!files["next.config.mjs"].contains("output: 'export'"));
+        let r = manifest::validate(&m, None);
+        assert!(r.valid, "{:?}", r.errors);
     }
 
     #[test]

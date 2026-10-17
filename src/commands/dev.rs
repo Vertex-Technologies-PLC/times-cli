@@ -7,6 +7,7 @@ use tiny_http::{Header, Request, Response, Server};
 use crate::bundle::build_dir_for;
 use crate::cli::DevArgs;
 use crate::error::CliError;
+use crate::hosting::{self, Provider};
 use crate::manifest::{self, relative, str_at, LOCALES, MANIFEST_FILE};
 use crate::ui::Output;
 
@@ -25,7 +26,36 @@ pub async fn run(out: &Output, args: DevArgs) -> anyhow::Result<()> {
         out.warn(format!("{} {}", e.path, e.message));
     }
 
+    let hosting = hosting::resolve(&loaded.value)?;
+    if hosting.provider == Provider::Developer && args.dir.is_none() {
+        if out.json {
+            return out.json(&serde_json::json!({
+                "hosting": "developer",
+                "entryUrl": hosting.entry_url,
+                "hint": "Start your app server (for Next: bun run dev). TIMES does not serve this origin."
+            }));
+        }
+        out.info("This AIP is developer-hosted. TIMES does not serve your origin.");
+        if let Some(url) = &hosting.entry_url {
+            out.info(format!("Production origin: {url}"));
+        }
+        out.info("Start your app locally, for example `bun run dev` for Next.");
+        out.info("Then run `times aip origin check` against the public HTTPS URL.");
+        return Ok(());
+    }
+
     let root = loaded.root.canonicalize()?;
+    if hosting.needs_bundle(&loaded.value)
+        && args.dir.is_none()
+        && hosting::output_dir_missing(&loaded.root, &loaded.value)
+    {
+        crate::build::ensure_output(&loaded.root, args.no_build)?;
+        if hosting::output_dir_missing(&loaded.root, &loaded.value) {
+            return Err(CliError::usage(
+                "Build finished but the guest output folder is still missing. Check ui.entry, or pass --dir.",
+            ));
+        }
+    }
     let dir = args.dir.clone().or_else(|| build_dir_for(&loaded.value));
     let serve = match &dir {
         Some(d) => relative(&root, d),

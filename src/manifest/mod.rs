@@ -237,29 +237,45 @@ fn semantic_checks(m: &Value, r: &mut Report) {
             );
         }
     }
+
+    hosting_checks(m, r);
 }
 
-fn is_public_https(url: &str) -> bool {
-    let Some(rest) = url.strip_prefix("https://") else {
-        return false;
+fn hosting_checks(m: &Value, r: &mut Report) {
+    let Some(provider) = str_at(m, "/hosting/provider") else {
+        return;
     };
-    let host_port = rest.split(['/', '?', '#']).next().unwrap_or("");
-    let host = if host_port.starts_with('[') {
-        host_port
-            .split(']')
-            .next()
-            .map(|h| format!("{h}]"))
-            .unwrap_or_default()
-    } else {
-        host_port.split(':').next().unwrap_or("").to_string()
-    };
-    let host = host.to_ascii_lowercase();
-    !host.is_empty()
-        && host != "localhost"
-        && !host.ends_with(".localhost")
-        && host != "127.0.0.1"
-        && host != "[::1]"
-        && host != "0.0.0.0"
+    match provider {
+        "developer" => match str_at(m, "/hosting/entryUrl") {
+            None | Some("") => r.error(
+                "/hosting/entryUrl",
+                "Developer-hosted AIPs need hosting.entryUrl.",
+            ),
+            Some(url) if !is_public_https(url) => r.error(
+                "/hosting/entryUrl",
+                "hosting.entryUrl must be a public https URL.",
+            ),
+            _ => {}
+        },
+        "times" => {
+            if let Some(url) = str_at(m, "/hosting/entryUrl") {
+                if !url.is_empty() {
+                    r.error(
+                        "/hosting/entryUrl",
+                        "Leave hosting.entryUrl empty when TIMES hosts the guest.",
+                    );
+                }
+            }
+        }
+        other => r.error(
+            "/hosting/provider",
+            format!("Unknown hosting.provider `{other}`."),
+        ),
+    }
+}
+
+pub fn is_public_https(url: &str) -> bool {
+    crate::netutil::is_public_https_url(url)
 }
 
 pub fn relative(root: &Path, p: &str) -> PathBuf {
@@ -331,7 +347,7 @@ fn file_checks(m: &Value, root: &Path, r: &mut Report) {
     }
 
     if let Some(entry) = str_at(m, "/ui/entry") {
-        if !relative(root, entry).is_file() {
+        if !entry.starts_with("https://") && !relative(root, entry).is_file() {
             r.warn(
                 "/ui/entry",
                 format!("{entry} does not exist yet. Build your app before `times aip push`."),
@@ -446,6 +462,9 @@ mod tests {
         assert!(!is_public_https("https://127.0.0.1:9000"));
         assert!(!is_public_https("https://[::1]/x"));
         assert!(!is_public_https("https://dev.localhost"));
+        assert!(!is_public_https("https://10.0.0.4/app"));
+        assert!(!is_public_https("https://169.254.169.254/"));
+        assert!(!is_public_https("https://a.example.com:8443/"));
     }
 
     #[test]

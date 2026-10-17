@@ -124,14 +124,24 @@ pub fn hint_for(code: &str) -> Option<&'static str> {
             "The version must be higher than the last one. Run `times manifest bump patch`."
         }
         "VERSION_LOCKED" => "This version is locked. Bump the version to push changes.",
-        "VERSION_NOT_READY" => "Push a bundle first with `times aip push`.",
+        "VERSION_NOT_READY" => {
+            "Push this version first with `times aip push` (TIMES-hosted zip or developer origin)."
+        }
         "VERSION_NOT_FOUND" => "Push this version first with `times aip push`.",
         "AIP_IN_REVIEW" | "REVIEW_IN_PROGRESS" => {
             "A version is already in review. Wait for it, or withdraw it with `times aip withdraw`."
         }
-        "SCAN_NOT_PASSED" => "The bundle scan did not pass. Check `times aip status` for notes.",
+        "SCAN_NOT_PASSED" | "BUNDLE_SCAN_FAILED" => {
+            "The bundle scan did not pass. Check `times aip status` and `times aip scan`."
+        }
         "LISTING_INCOMPLETE" => {
-            "Finish the store listing in the developer portal, then submit again."
+            "Finish the store listing with `times aip listing set`, then submit again."
+        }
+        "BUNDLE_STORAGE_UNCONFIGURED" => {
+            "TIMES cannot store this upload yet. The platform host is missing bundle storage config."
+        }
+        "DEVELOPER_HOSTING_NO_BUNDLE" => {
+            "This AIP is developer-hosted. Push the origin with `times aip push`, not a zip."
         }
         "AIP_NOT_DELETABLE" => "Published AIPs cannot be deleted.",
         "VALIDATION_FAILED" => "Check the values you passed and try again.",

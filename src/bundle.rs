@@ -116,8 +116,12 @@ pub fn collect(
     Ok(files)
 }
 
+#[cfg(test)]
 pub fn pack(root: &Path, manifest: &Value, dir: Option<&str>) -> anyhow::Result<Bundle> {
-    let files = collect(root, manifest, dir)?;
+    zip_files(collect(root, manifest, dir)?)
+}
+
+pub fn zip_files(files: BTreeMap<String, PathBuf>) -> anyhow::Result<Bundle> {
     let mut buf = Cursor::new(Vec::new());
     {
         let mut zip = zip::ZipWriter::new(&mut buf);

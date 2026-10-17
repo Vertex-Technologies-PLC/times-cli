@@ -32,8 +32,6 @@ cargo install --git https://github.com/Vertex-Technologies-PLC/times-cli
 times auth login
 times init my-app
 cd my-app
-bun install && bun run build
-times dev
 times aip create
 times aip push
 times aip submit
@@ -52,7 +50,7 @@ times aip submit
 | `times init [dir]` | Create a new AIP project. Creates a folder named after the slug unless `dir` is `.`. |
 | `times manifest validate` / `times manifest bump <level>` | Check or bump `times.aip.json`. |
 | `times dev` | Serve your build locally. |
-| `times aip list\|create\|info\|push\|submit\|status\|logs\|withdraw` | Manage AIPs and versions. |
+| `times aip list\|create\|info\|push\|submit\|status\|scan\|doctor\|listing\|origin\|delete\|open\|logs\|withdraw` | Manage AIPs and versions. |
 | `times stats` | Installs, usage and revenue. |
 | `times earnings` | Balance and earnings. |
 | `times payout list\|accounts\|request` | Withdrawals and payout accounts. |
