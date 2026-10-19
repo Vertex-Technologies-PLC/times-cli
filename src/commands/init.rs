@@ -363,6 +363,9 @@ pub fn manifest_json(o: &Options) -> Value {
             "highlightKeys": [format!("{prefix}.h1")]
         }]
     });
+    if o.kind == Kind::App || o.kind == Kind::Integration {
+        m["ui"]["iconDark"] = json!("./icon-dark.svg");
+    }
     if o.mode == Mode::Runtime {
         m["runtime"] = json!({
             "workerUrl": "https://your-worker.example.com",
@@ -402,9 +405,13 @@ fn pretty(v: &Value) -> String {
 const ICON: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="14" fill="#2563eb"/><path d="M20 22h24v6H35v16h-6V28h-9z" fill="#fff"/></svg>
 "##;
 
+const ICON_DARK: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="14" fill="#0f172a"/><path d="M20 22h24v6H35v16h-6V28h-9z" fill="#e2e8f0"/></svg>
+"##;
+
 const GITIGNORE: &str = "node_modules\ndist\nout\n.next\n*.zip\n.DS_Store\n.times/\n";
 
 const MAIN_TS: &str = r#"import '@times/aip-sdk/tokens.css';
+import '@times/aip-sdk/themes.css';
 import './style.css';
 import { createTimesAipClient } from '@times/aip-sdk';
 
@@ -415,7 +422,10 @@ const client = createTimesAipClient({
 
 const app = document.querySelector<HTMLDivElement>('#app')!;
 
-client.waitForInit().then(() => {
+client.waitForInit().then((init) => {
+  if (init.colorMode === 'dark') {
+    document.documentElement.classList.add('dark');
+  }
   const t = client.t;
   client.setTitle(t('meta.name'));
   const heading = document.createElement('h1');
@@ -478,6 +488,9 @@ window.addEventListener('message', (event) => {
   if (event.origin !== PARENT_ORIGIN) return;
   const msg = event.data;
   if (!msg || msg.type !== 'init') return;
+  if (msg.payload?.colorMode === 'dark') {
+    document.documentElement.classList.add('dark');
+  }
   const messages = msg.payload?.messages ?? {};
   document.getElementById('title').textContent = lookup(messages, 'home.title');
   document.getElementById('body').textContent = lookup(messages, 'home.body');
@@ -517,6 +530,7 @@ export default nextConfig;
 "#;
 
 const NEXT_LAYOUT: &str = r#"import '@times/aip-sdk/tokens.css';
+import '@times/aip-sdk/themes.css';
 import type { ReactNode } from 'react';
 
 export default function RootLayout({ children }: { children: ReactNode }) {
@@ -541,7 +555,10 @@ export default function Home() {
       parentOrigin: 'https://app.times.et',
       apiBaseUrl: 'https://api.times.et'
     });
-    c.waitForInit().then(() => {
+    c.waitForInit().then((init) => {
+      if (init.colorMode === 'dark') {
+        document.documentElement.classList.add('dark');
+      }
       c.setTitle(c.t('meta.name'));
       setClient(c);
       c.ready('1.0.0');
@@ -584,6 +601,7 @@ pub fn scaffold(o: &Options) -> Vec<(String, String)> {
     let mut files = vec![
         (MANIFEST_FILE.to_string(), pretty(&manifest_json(o))),
         ("icon.svg".into(), ICON.into()),
+        ("icon-dark.svg".into(), ICON_DARK.into()),
         (".gitignore".into(), GITIGNORE.into()),
     ];
     for l in LOCALES {
@@ -618,12 +636,17 @@ pub fn scaffold(o: &Options) -> Vec<(String, String)> {
             files.push((
                 "index.html".into(),
                 format!(
-                    "<!doctype html>\n<html lang=\"en\">\n  <head>\n    <meta charset=\"utf-8\" />\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />\n    <title>{}</title>\n    <link rel=\"stylesheet\" href=\"./style.css\" />\n  </head>\n  <body>\n    <h1 id=\"title\"></h1>\n    <p id=\"body\"></p>\n    <script src=\"./app.js\"></script>\n  </body>\n</html>\n",
+                    "<!doctype html>\n<html lang=\"en\">\n  <head>\n    <meta charset=\"utf-8\" />\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />\n    <title>{}</title>\n    <link rel=\"stylesheet\" href=\"./themes.css\" />\n    <link rel=\"stylesheet\" href=\"./style.css\" />\n  </head>\n  <body>\n    <h1 id=\"title\"></h1>\n    <p id=\"body\"></p>\n    <script src=\"./app.js\"></script>\n  </body>\n</html>\n",
                     html_escape(&o.name)
                 ),
             ));
             files.push(("app.js".into(), STATIC_JS.into()));
             files.push(("style.css".into(), STYLE_CSS.into()));
+            files.push((
+                "themes.css".into(),
+                "html { background: var(--background, #fff); color: var(--foreground, #111); }\n"
+                    .into(),
+            ));
         }
         Framework::Next => {
             let pkg = json!({

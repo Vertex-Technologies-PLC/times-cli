@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.3
+
+- `times manifest validate` checks the schema, version, scopes, TIMES tokens, light and dark icons, entry, locales, changelog, catalogs, and palette adoption. Each check prints PASS, WARN, or FAIL while a progress bar fills.
+- Catalogs need `meta.name`. Amharic, Afaan Oromo, and Tigrinya catalogs must not be a copy of English. User-facing catalog strings cannot use an em dash.
+- Apps and integrations need both `ui.icon` and `ui.iconDark`, and those files must differ.
+- When source is present, it must link `themes.css`, follow the host color mode, and import `@times/aip-sdk` unless the app is static.
+- `times init` scaffolds the dark icon, palette stylesheet, and color mode hook.
+
 ## 0.4.2
 
 - Credentials live in `~/.config/times/credentials.json` (mode 0600). macOS Keychain no longer prompts on every command. Existing Keychain sessions are copied to that file on first use.

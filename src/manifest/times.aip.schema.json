@@ -84,6 +84,9 @@
         "icon": {
           "type": "string"
         },
+        "iconDark": {
+          "type": "string"
+        },
         "uses_times_tokens": {
           "type": "boolean",
           "const": true

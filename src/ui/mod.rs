@@ -75,6 +75,22 @@ impl Output {
             .map_err(prompt_error)
     }
 
+    pub fn progress(&self, len: u64) -> ProgressBar {
+        if !self.interactive || len == 0 {
+            return ProgressBar::hidden();
+        }
+        let pb = ProgressBar::new(len);
+        pb.set_style(
+            ProgressStyle::with_template(
+                "{spinner:.cyan} {bar:32.cyan/blue} {pos:>2}/{len:<2} {msg}",
+            )
+            .unwrap()
+            .progress_chars("█▉▊▋▌▍▎▏░"),
+        );
+        pb.enable_steady_tick(Duration::from_millis(80));
+        pb
+    }
+
     pub fn spinner(&self, msg: impl Into<String>) -> ProgressBar {
         if !self.interactive {
             return ProgressBar::hidden();

@@ -46,10 +46,23 @@ pub const ALLOWED_SCOPES: &[&str] = &[
     "payroll:admin",
 ];
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CheckStatus {
+    Pass,
+    Warn,
+    Fail,
+}
+
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct Issue {
     pub path: String,
     pub message: String,
+}
+
+pub struct ValidationJob {
+    pub name: &'static str,
+    pub run: fn(&Value, Option<&Path>, &mut Report),
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -72,6 +85,16 @@ impl Report {
             path: path.into(),
             message: message.into(),
         });
+    }
+
+    pub fn check_status(&self) -> CheckStatus {
+        if !self.errors.is_empty() {
+            CheckStatus::Fail
+        } else if !self.warnings.is_empty() {
+            CheckStatus::Warn
+        } else {
+            CheckStatus::Pass
+        }
     }
 }
 
@@ -129,29 +152,86 @@ pub fn is_semver(v: &str) -> bool {
 
 pub fn validate(manifest: &Value, root: Option<&Path>) -> Report {
     let mut r = Report::default();
+    for job in validation_plan(manifest, root) {
+        (job.run)(manifest, root, &mut r);
+    }
+    r.errors.dedup();
+    r.valid = r.errors.is_empty();
+    r
+}
 
-    for err in validator().iter_errors(manifest) {
+pub fn validation_plan(m: &Value, root: Option<&Path>) -> Vec<ValidationJob> {
+    let kind = str_at(m, "/kind").unwrap_or("");
+    let mut jobs = vec![
+        ValidationJob {
+            name: "Schema",
+            run: schema_checks,
+        },
+        ValidationJob {
+            name: "Version",
+            run: version_checks,
+        },
+        ValidationJob {
+            name: "Scopes",
+            run: scope_checks,
+        },
+    ];
+    if kind != "pack" {
+        jobs.push(ValidationJob {
+            name: "TIMES tokens",
+            run: token_checks,
+        });
+    }
+    if kind == "app" || kind == "integration" {
+        jobs.push(ValidationJob {
+            name: "Icons",
+            run: icon_checks,
+        });
+    }
+    jobs.push(ValidationJob {
+        name: "Entry",
+        run: entry_checks,
+    });
+    jobs.push(ValidationJob {
+        name: "Locales",
+        run: locale_checks,
+    });
+    jobs.push(ValidationJob {
+        name: "Changelog",
+        run: changelog_checks,
+    });
+    if str_at(m, "/hosting/provider").is_some() {
+        jobs.push(ValidationJob {
+            name: "Hosting",
+            run: hosting_job,
+        });
+    }
+    if root.is_some() {
+        jobs.push(ValidationJob {
+            name: "Catalogs",
+            run: catalog_job,
+        });
+        if kind != "pack" {
+            jobs.push(ValidationJob {
+                name: "Theme",
+                run: theme_job,
+            });
+        }
+    }
+    jobs
+}
+
+fn schema_checks(m: &Value, _: Option<&Path>, r: &mut Report) {
+    for err in validator().iter_errors(m) {
         let path = err.instance_path.to_string();
         r.error(
             if path.is_empty() { "/".into() } else { path },
             err.to_string(),
         );
     }
-
-    semantic_checks(manifest, &mut r);
-    if let Some(root) = root {
-        file_checks(manifest, root, &mut r);
-    }
-
-    r.errors.dedup();
-    r.valid = r.errors.is_empty();
-    r
 }
 
-fn semantic_checks(m: &Value, r: &mut Report) {
-    let kind = str_at(m, "/kind").unwrap_or("");
-    let mode = str_at(m, "/mode").unwrap_or("");
-
+fn version_checks(m: &Value, _: Option<&Path>, r: &mut Report) {
     if let Some(v) = str_at(m, "/version") {
         if !is_semver(v) {
             r.error(
@@ -160,7 +240,9 @@ fn semantic_checks(m: &Value, r: &mut Report) {
             );
         }
     }
+}
 
+fn scope_checks(m: &Value, _: Option<&Path>, r: &mut Report) {
     for group in ["required", "optional"] {
         if let Some(list) = m
             .pointer(&format!("/scopes/{group}"))
@@ -178,14 +260,57 @@ fn semantic_checks(m: &Value, r: &mut Report) {
             }
         }
     }
+}
 
+fn token_checks(m: &Value, _: Option<&Path>, r: &mut Report) {
+    let kind = str_at(m, "/kind").unwrap_or("");
     if kind != "pack" && m.pointer("/ui/uses_times_tokens") != Some(&Value::Bool(true)) {
         r.error(
             "/ui/uses_times_tokens",
             "Apps and integrations must set ui.uses_times_tokens to true.",
         );
     }
+}
 
+fn icon_checks(m: &Value, root: Option<&Path>, r: &mut Report) {
+    let kind = str_at(m, "/kind").unwrap_or("");
+    if kind == "app" || kind == "integration" {
+        if str_at(m, "/ui/icon").unwrap_or("").is_empty() {
+            r.error(
+                "/ui/icon",
+                "Apps and integrations need a light-mode icon at ui.icon.",
+            );
+        }
+        if str_at(m, "/ui/iconDark").unwrap_or("").is_empty() {
+            r.error(
+                "/ui/iconDark",
+                "Apps and integrations need a dark-mode icon at ui.iconDark.",
+            );
+        }
+    }
+    let Some(root) = root else {
+        return;
+    };
+    if let Some(icon) = str_at(m, "/ui/icon") {
+        if !relative(root, icon).is_file() {
+            r.error("/ui/icon", format!("Icon {icon} is missing."));
+        }
+    }
+    if let Some(icon_dark) = str_at(m, "/ui/iconDark") {
+        if !relative(root, icon_dark).is_file() {
+            r.error("/ui/iconDark", format!("Dark icon {icon_dark} is missing."));
+        }
+        if str_at(m, "/ui/icon") == Some(icon_dark) {
+            r.error(
+                "/ui/iconDark",
+                "ui.iconDark must be a different file from ui.icon.",
+            );
+        }
+    }
+}
+
+fn entry_checks(m: &Value, root: Option<&Path>, r: &mut Report) {
+    let mode = str_at(m, "/mode").unwrap_or("");
     if mode == "platform" && str_at(m, "/ui/entry").unwrap_or("").is_empty() {
         r.error("/ui/entry", "Platform mode needs ui.entry.");
     }
@@ -207,6 +332,20 @@ fn semantic_checks(m: &Value, r: &mut Report) {
         }
     }
 
+    let Some(root) = root else {
+        return;
+    };
+    if let Some(entry) = str_at(m, "/ui/entry") {
+        if !entry.starts_with("https://") && !relative(root, entry).is_file() {
+            r.warn(
+                "/ui/entry",
+                format!("{entry} does not exist yet. Build your app before `times aip push`."),
+            );
+        }
+    }
+}
+
+fn locale_checks(m: &Value, _: Option<&Path>, r: &mut Report) {
     let locales: Vec<&str> = m
         .pointer("/i18n/locales")
         .and_then(Value::as_array)
@@ -223,7 +362,9 @@ fn semantic_checks(m: &Value, r: &mut Report) {
             );
         }
     }
+}
 
+fn changelog_checks(m: &Value, _: Option<&Path>, r: &mut Report) {
     if let Some(version) = str_at(m, "/version") {
         let has_entry = m
             .pointer("/changelog")
@@ -237,7 +378,9 @@ fn semantic_checks(m: &Value, r: &mut Report) {
             );
         }
     }
+}
 
+fn hosting_job(m: &Value, _: Option<&Path>, r: &mut Report) {
     hosting_checks(m, r);
 }
 
@@ -293,7 +436,21 @@ fn lookup<'a>(catalog: &'a Value, key: &str) -> Option<&'a Value> {
     Some(cur)
 }
 
-fn file_checks(m: &Value, root: &Path, r: &mut Report) {
+fn catalog_job(m: &Value, root: Option<&Path>, r: &mut Report) {
+    let Some(root) = root else {
+        return;
+    };
+    catalog_file_checks(m, root, r);
+}
+
+fn theme_job(m: &Value, root: Option<&Path>, r: &mut Report) {
+    let Some(root) = root else {
+        return;
+    };
+    theme_adoption_checks(m, root, r);
+}
+
+fn catalog_file_checks(m: &Value, root: &Path, r: &mut Report) {
     let mut keys: Vec<String> = vec!["meta.name".into()];
     if let (Some(version), Some(entries)) = (
         str_at(m, "/version"),
@@ -334,7 +491,16 @@ fn file_checks(m: &Value, root: &Path, r: &mut Report) {
         };
         for key in &keys {
             match lookup(&catalog, key) {
-                Some(Value::String(s)) if !s.trim().is_empty() => {}
+                Some(Value::String(s)) if !s.trim().is_empty() => {
+                    if s.contains('\u{2014}') {
+                        r.error(
+                            pointer.clone(),
+                            format!(
+                                "`{key}` in {rel} uses an em dash. Use a period, colon, or hyphen."
+                            ),
+                        );
+                    }
+                }
                 Some(Value::String(_)) => {
                     r.warn(pointer.clone(), format!("`{key}` is empty in {rel}."))
                 }
@@ -344,19 +510,91 @@ fn file_checks(m: &Value, root: &Path, r: &mut Report) {
                 _ => r.error(pointer.clone(), format!("`{key}` is missing from {rel}.")),
             }
         }
-    }
-
-    if let Some(entry) = str_at(m, "/ui/entry") {
-        if !entry.starts_with("https://") && !relative(root, entry).is_file() {
-            r.warn(
-                "/ui/entry",
-                format!("{entry} does not exist yet. Build your app before `times aip push`."),
-            );
+        if l != "en" {
+            if let Some(en_rel) = str_at(m, "/i18n/catalogs/en") {
+                let en_path = relative(root, en_rel);
+                if let Ok(en_text) = fs::read_to_string(&en_path) {
+                    if text.trim() == en_text.trim() {
+                        r.error(
+                            pointer,
+                            format!("Catalog {rel} is a copy of the English catalog. Write {l}."),
+                        );
+                    }
+                }
+            }
         }
     }
-    if let Some(icon) = str_at(m, "/ui/icon") {
-        if !relative(root, icon).is_file() {
-            r.error("/ui/icon", format!("Icon {icon} is missing."));
+}
+
+fn theme_adoption_checks(m: &Value, root: &Path, r: &mut Report) {
+    let kind = str_at(m, "/kind").unwrap_or("");
+    if kind == "pack" {
+        return;
+    }
+    let Some(blob) = source_blob(root) else {
+        return;
+    };
+    if !blob.contains("themes.css") {
+        r.error(
+            "/ui",
+            "Import @times/aip-sdk/themes.css, or link themes.css, so palette type and structure match TIMES.",
+        );
+    }
+    let follows_mode = blob.contains("colorMode")
+        || blob.contains("@custom-variant dark")
+        || blob.contains("classList.add('dark'")
+        || blob.contains("classList.add(\"dark\"")
+        || blob.contains("applyThemeToDocument");
+    if !follows_mode {
+        r.error(
+            "/ui",
+            "Follow the host color mode with the dark class or colorMode.",
+        );
+    }
+    let framework = str_at(m, "/ui/framework").unwrap_or("");
+    if framework != "static" && !blob.contains("@times/aip-sdk") {
+        r.error(
+            "/ui",
+            "Import @times/aip-sdk so shared components match TIMES.",
+        );
+    }
+}
+
+fn source_blob(root: &Path) -> Option<String> {
+    let mut files = Vec::new();
+    collect_sources(root, 0, &mut files);
+    if files.is_empty() {
+        None
+    } else {
+        Some(files.join("\n"))
+    }
+}
+
+fn collect_sources(dir: &Path, depth: u8, out: &mut Vec<String>) {
+    if depth > 6 {
+        return;
+    }
+    let entries = match fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if name.starts_with('.') || name == "node_modules" || name == "dist" || name == "out" {
+            continue;
+        }
+        if path.is_dir() {
+            collect_sources(&path, depth + 1, out);
+            continue;
+        }
+        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+        if !matches!(ext, "css" | "tsx" | "ts" | "html" | "jsx" | "js") {
+            continue;
+        }
+        if let Ok(text) = fs::read_to_string(&path) {
+            out.push(text);
         }
     }
 }
@@ -379,6 +617,8 @@ mod tests {
                 "runtime": "iframe",
                 "surfaces": ["page"],
                 "entry": "./dist/index.html",
+                "icon": "./icon.svg",
+                "iconDark": "./icon-dark.svg",
                 "uses_times_tokens": true
             },
             "scopes": { "required": ["company:read"] },
@@ -398,6 +638,37 @@ mod tests {
                 "highlightKeys": ["changelog.v1_0_0.h1"]
             }]
         })
+    }
+
+    #[test]
+    fn plan_lists_the_checks_that_apply() {
+        let names: Vec<_> = validation_plan(&sample(), None)
+            .into_iter()
+            .map(|job| job.name)
+            .collect();
+        assert_eq!(
+            names,
+            vec![
+                "Schema",
+                "Version",
+                "Scopes",
+                "TIMES tokens",
+                "Icons",
+                "Entry",
+                "Locales",
+                "Changelog"
+            ]
+        );
+    }
+
+    #[test]
+    fn check_status_follows_the_issues() {
+        let mut report = Report::default();
+        assert_eq!(report.check_status(), CheckStatus::Pass);
+        report.warn("/", "missing name");
+        assert_eq!(report.check_status(), CheckStatus::Warn);
+        report.error("/", "broken");
+        assert_eq!(report.check_status(), CheckStatus::Fail);
     }
 
     #[test]
@@ -476,9 +747,17 @@ mod tests {
             "meta": { "name": "My App" },
             "changelog": { "v1_0_0": { "summary": "First", "h1": "Hello" } }
         });
-        for l in ["en", "am", "om"] {
-            fs::write(msgs.join(format!("{l}.json")), full.to_string()).unwrap();
-        }
+        fs::write(msgs.join("en.json"), full.to_string()).unwrap();
+        let am = json!({
+            "meta": { "name": "መተግበሪያ" },
+            "changelog": { "v1_0_0": { "summary": "መጀመሪያ", "h1": "ሰላም" } }
+        });
+        fs::write(msgs.join("am.json"), am.to_string()).unwrap();
+        let om = json!({
+            "meta": { "name": "Appii" },
+            "changelog": { "v1_0_0": { "summary": "Jalqaba", "h1": "Nagaa" } }
+        });
+        fs::write(msgs.join("om.json"), om.to_string()).unwrap();
         fs::write(
             msgs.join("ti.json"),
             json!({"meta": {"name": "x"}}).to_string(),
@@ -492,6 +771,43 @@ mod tests {
             .iter()
             .any(|e| e.path == "/i18n/catalogs/ti" && e.message.contains("summary")));
         assert!(r.warnings.iter().any(|w| w.path == "/ui/entry"));
+    }
+
+    #[test]
+    fn copied_catalog_and_em_dash_fail() {
+        let dir = tempfile::tempdir().unwrap();
+        let msgs = dir.path().join("i18n/messages");
+        fs::create_dir_all(&msgs).unwrap();
+        let en = json!({
+            "meta": { "name": "My App" },
+            "changelog": { "v1_0_0": { "summary": "First — note", "h1": "Hello" } }
+        });
+        for l in ["en", "am", "om", "ti"] {
+            fs::write(msgs.join(format!("{l}.json")), en.to_string()).unwrap();
+        }
+        let r = validate(&sample(), Some(dir.path()));
+        assert!(r.errors.iter().any(|e| e.message.contains("em dash")));
+        assert!(r
+            .errors
+            .iter()
+            .any(|e| e.message.contains("copy of the English")));
+    }
+
+    #[test]
+    fn light_and_dark_icons_are_required() {
+        let mut m = sample();
+        m["ui"].as_object_mut().unwrap().remove("iconDark");
+        let r = validate(&m, None);
+        assert!(r.errors.iter().any(|e| e.path == "/ui/iconDark"));
+    }
+
+    #[test]
+    fn palette_css_and_color_mode_are_required_when_source_exists() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("index.html"), "<html></html>").unwrap();
+        let r = validate(&sample(), Some(dir.path()));
+        assert!(r.errors.iter().any(|e| e.message.contains("themes.css")));
+        assert!(r.errors.iter().any(|e| e.message.contains("color mode")));
     }
 
     #[test]
