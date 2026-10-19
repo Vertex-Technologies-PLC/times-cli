@@ -531,10 +531,12 @@ export default nextConfig;
 
 const NEXT_LAYOUT: &str = r#"import type { ReactNode } from 'react';
 import Script from 'next/script';
-import { THEME_BOOT_SCRIPT } from '@times/aip-sdk';
 import '@times/aip-sdk/tokens.css';
 import '@times/aip-sdk/themes.css';
 import '@times/aip-sdk/theme-structure.css';
+
+const THEME_BOOT_SCRIPT =
+  "(function(){try{var p=new URLSearchParams(location.search);var theme=p.get('theme');var mode=p.get('colorMode');var root=document.documentElement;if(theme&&/^[a-z0-9-]+$/.test(theme))root.setAttribute('data-theme',theme);if(mode==='dark'){root.classList.add('dark');root.style.colorScheme='dark';}else if(mode==='light'){root.classList.remove('dark');root.style.colorScheme='light';}}catch(e){}})();";
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
