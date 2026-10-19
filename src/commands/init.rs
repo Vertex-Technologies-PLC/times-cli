@@ -484,17 +484,56 @@ function lookup(messages, key) {
   return key.split('.').reduce((node, part) => (node ? node[part] : undefined), messages) ?? key;
 }
 
+const held = { theme: '', colorMode: '', locale: '' };
+
+function paintHeld() {
+  const root = document.documentElement;
+  if (held.theme && root.getAttribute('data-theme') !== held.theme) {
+    root.setAttribute('data-theme', held.theme);
+  }
+  if (held.colorMode === 'dark') {
+    root.classList.add('dark');
+    root.style.colorScheme = 'dark';
+  } else if (held.colorMode === 'light') {
+    root.classList.remove('dark');
+    root.style.colorScheme = 'light';
+  }
+  if (held.locale && root.lang !== held.locale) root.lang = held.locale;
+}
+
+function holdPrefs(next) {
+  const theme =
+    typeof next.themeId === 'string' ? next.themeId : typeof next.theme === 'string' ? next.theme : '';
+  if (theme && /^[a-z0-9-]+$/.test(theme)) held.theme = theme;
+  if (next.colorMode === 'dark' || next.colorMode === 'light') held.colorMode = next.colorMode;
+  if (typeof next.locale === 'string' && /^(en|am|om|ti)$/.test(next.locale)) held.locale = next.locale;
+  paintHeld();
+}
+
+const boot = new URLSearchParams(location.search);
+holdPrefs({ theme: boot.get('theme'), colorMode: boot.get('colorMode'), locale: boot.get('locale') });
+new MutationObserver(paintHeld).observe(document.documentElement, {
+  attributes: true,
+  attributeFilter: ['data-theme', 'class', 'lang']
+});
+
 window.addEventListener('message', (event) => {
   if (event.origin !== PARENT_ORIGIN) return;
   const msg = event.data;
-  if (!msg || msg.type !== 'init') return;
-  if (msg.payload?.colorMode === 'dark') {
-    document.documentElement.classList.add('dark');
+  if (!msg || (msg.type !== 'init' && msg.type !== 'theme' && msg.type !== 'preferences' && msg.type !== 'locale')) {
+    return;
   }
-  const messages = msg.payload?.messages ?? {};
-  document.getElementById('title').textContent = lookup(messages, 'home.title');
-  document.getElementById('body').textContent = lookup(messages, 'home.body');
-  window.parent.postMessage({ v: 1, type: 'ready', payload: { version: 1, appVersion: '1.0.0' } }, PARENT_ORIGIN);
+  const payload = msg.payload ?? {};
+  holdPrefs(payload);
+  if (msg.type !== 'init' && msg.type !== 'locale' && msg.type !== 'preferences') return;
+  const messages = payload.messages ?? {};
+  if (msg.type === 'init' || payload.messages) {
+    document.getElementById('title').textContent = lookup(messages, 'home.title');
+    document.getElementById('body').textContent = lookup(messages, 'home.body');
+  }
+  if (msg.type === 'init') {
+    window.parent.postMessage({ v: 1, type: 'ready', payload: { version: 1, appVersion: '1.0.0' } }, PARENT_ORIGIN);
+  }
 });
 "#;
 
@@ -536,7 +575,7 @@ import '@times/aip-sdk/themes.css';
 import '@times/aip-sdk/theme-structure.css';
 
 const THEME_BOOT_SCRIPT =
-  "(function(){try{var p=new URLSearchParams(location.search);var theme=p.get('theme');var mode=p.get('colorMode');var root=document.documentElement;if(theme&&/^[a-z0-9-]+$/.test(theme))root.setAttribute('data-theme',theme);if(mode==='dark'){root.classList.add('dark');root.style.colorScheme='dark';}else if(mode==='light'){root.classList.remove('dark');root.style.colorScheme='light';}}catch(e){}})();";
+  "(function(){try{var p=new URLSearchParams(location.search);var theme=p.get('theme');var mode=p.get('colorMode');var locale=p.get('locale');var root=document.documentElement;if(theme&&/^[a-z0-9-]+$/.test(theme))root.setAttribute('data-theme',theme);if(mode==='dark'){root.classList.add('dark');root.style.colorScheme='dark';}else if(mode==='light'){root.classList.remove('dark');root.style.colorScheme='light';}if(locale&&/^(en|am|om|ti)$/.test(locale))root.lang=locale;}catch(e){}})();";
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
@@ -635,7 +674,7 @@ pub fn scaffold(o: &Options) -> Vec<(String, String)> {
             files.push((
                 "index.html".into(),
                 format!(
-                    "<!doctype html>\n<html lang=\"en\">\n  <head>\n    <script id=\"times-theme-boot\">(function(){{try{{var p=new URLSearchParams(location.search);var theme=p.get('theme');var mode=p.get('colorMode');var root=document.documentElement;if(theme&&/^[a-z0-9-]+$/.test(theme))root.setAttribute('data-theme',theme);if(mode==='dark'){{root.classList.add('dark');root.style.colorScheme='dark';}}else if(mode==='light'){{root.classList.remove('dark');root.style.colorScheme='light';}}}}catch(e){{}}}})();</script>\n    <meta charset=\"utf-8\" />\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />\n    <title>{}</title>\n  </head>\n  <body>\n    <div id=\"app\"></div>\n    <script type=\"module\" src=\"/src/main.ts\"></script>\n  </body>\n</html>\n",
+                    "<!doctype html>\n<html lang=\"en\">\n  <head>\n    <script id=\"times-theme-boot\">(function(){{try{{var p=new URLSearchParams(location.search);var theme=p.get('theme');var mode=p.get('colorMode');var locale=p.get('locale');var root=document.documentElement;if(theme&&/^[a-z0-9-]+$/.test(theme))root.setAttribute('data-theme',theme);if(mode==='dark'){{root.classList.add('dark');root.style.colorScheme='dark';}}else if(mode==='light'){{root.classList.remove('dark');root.style.colorScheme='light';}}if(locale&&/^(en|am|om|ti)$/.test(locale))root.lang=locale;}}catch(e){{}}}})();</script>\n    <meta charset=\"utf-8\" />\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />\n    <title>{}</title>\n  </head>\n  <body>\n    <div id=\"app\"></div>\n    <script type=\"module\" src=\"/src/main.ts\"></script>\n  </body>\n</html>\n",
                     html_escape(&o.name)
                 ),
             ));
@@ -646,7 +685,7 @@ pub fn scaffold(o: &Options) -> Vec<(String, String)> {
             files.push((
                 "index.html".into(),
                 format!(
-                    "<!doctype html>\n<html lang=\"en\">\n  <head>\n    <script id=\"times-theme-boot\">(function(){{try{{var p=new URLSearchParams(location.search);var theme=p.get('theme');var mode=p.get('colorMode');var root=document.documentElement;if(theme&&/^[a-z0-9-]+$/.test(theme))root.setAttribute('data-theme',theme);if(mode==='dark'){{root.classList.add('dark');root.style.colorScheme='dark';}}else if(mode==='light'){{root.classList.remove('dark');root.style.colorScheme='light';}}}}catch(e){{}}}})();</script>\n    <meta charset=\"utf-8\" />\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />\n    <title>{}</title>\n    <link rel=\"stylesheet\" href=\"./themes.css\" />\n    <link rel=\"stylesheet\" href=\"./style.css\" />\n  </head>\n  <body>\n    <h1 id=\"title\"></h1>\n    <p id=\"body\"></p>\n    <script src=\"./app.js\"></script>\n  </body>\n</html>\n",
+                    "<!doctype html>\n<html lang=\"en\">\n  <head>\n    <script id=\"times-theme-boot\">(function(){{try{{var p=new URLSearchParams(location.search);var theme=p.get('theme');var mode=p.get('colorMode');var locale=p.get('locale');var root=document.documentElement;if(theme&&/^[a-z0-9-]+$/.test(theme))root.setAttribute('data-theme',theme);if(mode==='dark'){{root.classList.add('dark');root.style.colorScheme='dark';}}else if(mode==='light'){{root.classList.remove('dark');root.style.colorScheme='light';}}if(locale&&/^(en|am|om|ti)$/.test(locale))root.lang=locale;}}catch(e){{}}}})();</script>\n    <meta charset=\"utf-8\" />\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />\n    <title>{}</title>\n    <link rel=\"stylesheet\" href=\"./themes.css\" />\n    <link rel=\"stylesheet\" href=\"./style.css\" />\n  </head>\n  <body>\n    <h1 id=\"title\"></h1>\n    <p id=\"body\"></p>\n    <script src=\"./app.js\"></script>\n  </body>\n</html>\n",
                     html_escape(&o.name)
                 ),
             ));
