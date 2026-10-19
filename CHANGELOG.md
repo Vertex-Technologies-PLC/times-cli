@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.6
+
+- Manifest validate allows `lender:read`, `lender:write`, and `lender:admin` for TIMES Lender apps.
+
 ## 0.4.5
 
 - Theme validation requires guest apps to load user preferences (`createTimesAipClient` prefs sync, `api.preferences`, or `/api/v1/apps/runtime/v1/preferences`) so locale, palette, and color mode match TIMES.
