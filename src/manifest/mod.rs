@@ -44,6 +44,9 @@ pub const ALLOWED_SCOPES: &[&str] = &[
     "payroll:read",
     "payroll:write",
     "payroll:admin",
+    "lender:read",
+    "lender:write",
+    "lender:admin",
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
