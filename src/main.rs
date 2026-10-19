@@ -21,8 +21,9 @@ use clap::Parser;
 use console::style;
 use serde_json::json;
 
-use cli::Cli;
+use cli::{Cli, Command};
 use error::{exit, CliError};
+use ui::Output;
 
 fn main() {
     if update::is_internal_check() {
@@ -34,16 +35,51 @@ fn main() {
         return;
     }
 
-    let cli = Cli::parse();
+    let cli = match Cli::try_parse() {
+        Ok(cli) => cli,
+        Err(err) => finish_clap(err),
+    };
     let json_mode = cli.global.json;
-    let runtime = tokio::runtime::Builder::new_multi_thread()
+    let quiet_update =
+        json_mode || matches!(cli.command, Command::Completions(_) | Command::Upgrade);
+    let result = {
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .expect("tokio runtime");
+        runtime.block_on(commands::run(cli))
+    };
+    if let Err(err) = result {
+        let code = report(&err, json_mode);
+        if !quiet_update {
+            warn_about_update();
+        }
+        std::process::exit(code);
+    }
+    if !quiet_update {
+        warn_about_update();
+    }
+}
+
+fn finish_clap(err: clap::Error) -> ! {
+    let code = err.exit_code();
+    let _ = err.print();
+    if !std::env::args().any(|arg| arg == "--json") {
+        warn_about_update();
+    }
+    std::process::exit(code);
+}
+
+fn warn_about_update() {
+    let _ = std::io::Write::flush(&mut std::io::stdout());
+    let out = Output::new(false, true, true);
+    let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
-        .expect("tokio runtime");
-    let result = runtime.block_on(commands::run(cli));
-    if let Err(err) = result {
-        std::process::exit(report(&err, json_mode));
-    }
+    else {
+        return;
+    };
+    runtime.block_on(update::maybe_warn(&out));
 }
 
 fn report(err: &anyhow::Error, json_mode: bool) -> i32 {

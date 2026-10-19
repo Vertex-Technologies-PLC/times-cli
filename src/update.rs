@@ -1,6 +1,5 @@
 use std::fs;
 use std::path::PathBuf;
-use std::process::Stdio;
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
@@ -187,47 +186,26 @@ pub fn print_upgrade_hint(out: &Output, current: &Version, latest: &Version) {
     if out.json {
         return;
     }
+    eprintln!();
     out.warn(format!("times {latest} is out. You have {current}."));
     out.info(format!("  Changelog: {CHANGELOG_URL}"));
     out.info("  Upgrade:   times upgrade");
 }
 
-fn spawn_background_refresh() {
-    let Ok(exe) = std::env::current_exe() else {
-        return;
-    };
-    let mut cmd = std::process::Command::new(exe);
-    cmd.env(INTERNAL_CHECK_ENV, "1")
-        .env("TIMES_NO_UPDATE_CHECK", "1")
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::CommandExt;
-        cmd.process_group(0);
-    }
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        const DETACHED_PROCESS: u32 = 0x0000_0008;
-        cmd.creation_flags(CREATE_NO_WINDOW | DETACHED_PROCESS);
-    }
-    let _ = cmd.spawn();
-}
-
-pub fn maybe_warn(out: &Output) {
+/// Print a newer-version warning after the command's own output.
+/// A fresh cache returns immediately. A stale cache asks GitHub first.
+pub async fn maybe_warn(out: &Output) {
     if out.json || skip_check() {
         return;
     }
     let current = current_version();
     let cache = read_cache_file();
+    if should_refresh_cache(cache.as_ref(), &current, Utc::now()) {
+        refresh_from_network().await;
+    }
+    let cache = read_cache_file();
     if let Some(latest) = cached_update_to_show(cache.as_ref(), &current) {
         print_upgrade_hint(out, &current, &latest);
-    }
-    if should_refresh_cache(cache.as_ref(), &current, Utc::now()) {
-        spawn_background_refresh();
     }
 }
 

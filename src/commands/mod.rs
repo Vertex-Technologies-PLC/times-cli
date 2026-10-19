@@ -19,10 +19,6 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
     let g = cli.global;
     let out = Output::new(g.json, g.no_input, g.yes);
 
-    if !matches!(cli.command, Command::Completions(_) | Command::Upgrade) {
-        crate::update::maybe_warn(&out);
-    }
-
     match cli.command {
         Command::Completions(args) => completions::run(args),
         Command::SetupShell(args) => setup_shell::run(&out, args),

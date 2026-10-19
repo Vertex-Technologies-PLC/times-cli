@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.4
+
+- Every command prints a newer-version warning after its own output, including `times help` and `times --version`. The warning names the new version and `times upgrade`.
+- If the saved check is stale, the command asks GitHub before that warning. A fresh check does not wait. `times upgrade`, shell completions, JSON output, and `TIMES_NO_UPDATE_CHECK=1` stay quiet.
+
 ## 0.4.3
 
 - `times manifest validate` checks the schema, version, scopes, TIMES tokens, light and dark icons, entry, locales, changelog, catalogs, and palette adoption. Each check prints PASS, WARN, or FAIL while a progress bar fills.
