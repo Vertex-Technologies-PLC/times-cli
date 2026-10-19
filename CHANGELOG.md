@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.5
+
+- Theme validation requires guest apps to load user preferences (`createTimesAipClient` prefs sync, `api.preferences`, or `/api/v1/apps/runtime/v1/preferences`) so locale, palette, and color mode match TIMES.
+- Built CSS/JS/HTML must include all TIMES palettes from `themes.css` and a preferences fetch path. Missing palettes or prefs sync fails validation.
+- Color mode checks accept light, dark, and system (`prefers-color-scheme` / `THEME_BOOT_SCRIPT`).
+
 ## 0.4.4
 
 - Every command prints a newer-version warning after its own output, including `times help` and `times --version`. The warning names the new version and `times upgrade`.

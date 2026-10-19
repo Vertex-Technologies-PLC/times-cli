@@ -560,12 +560,135 @@ fn theme_adoption_checks(m: &Value, root: &Path, r: &mut Report) {
             "Follow the host color mode with the dark class or colorMode.",
         );
     }
+    let loads_prefs = blob.contains("runtime/v1/preferences")
+        || blob.contains("api.preferences")
+        || blob.contains("applyUserPreferences")
+        || blob.contains("syncPreferencesFromApi")
+        || blob.contains("createTimesAipClient");
+    if !loads_prefs {
+        r.error(
+            "/ui",
+            "Load user preferences via createTimesAipClient (SDK fetches /api/v1/apps/runtime/v1/preferences) or call api.preferences / applyUserPreferences so locale, theme palette, and color mode match TIMES.",
+        );
+    }
+    let supports_system = blob.contains("prefers-color-scheme")
+        || blob.contains("colorMode === 'system'")
+        || blob.contains("color_mode")
+        || blob.contains("THEME_BOOT_SCRIPT")
+        || blob.contains("times-theme-boot");
+    if !supports_system {
+        r.error(
+            "/ui",
+            "Support color mode light, dark, and system (prefers-color-scheme / THEME_BOOT_SCRIPT).",
+        );
+    }
     let framework = str_at(m, "/ui/framework").unwrap_or("");
     if framework != "static" && !blob.contains("@times/aip-sdk") {
         r.error(
             "/ui",
             "Import @times/aip-sdk so shared components match TIMES.",
         );
+    }
+    built_css_palette_checks(m, root, r);
+}
+
+fn built_css_palette_checks(m: &Value, root: &Path, r: &mut Report) {
+    let entry = str_at(m, "/ui/entry").unwrap_or("");
+    let candidates: [Option<std::path::PathBuf>; 4] = [
+        Some(root.join("out")),
+        Some(root.join("dist")),
+        Some(root.join("build")),
+        entry_parent(root, entry),
+    ];
+    let mut css_blobs = String::new();
+    for dir in candidates.iter().flatten() {
+        collect_built_css(dir, 0, &mut css_blobs);
+    }
+    if css_blobs.is_empty() {
+        return;
+    }
+    if !css_blobs.contains("[data-theme") {
+        r.error(
+            "/ui",
+            "Built CSS is missing [data-theme] palette rules. Import @times/aip-sdk/themes.css and rebuild so Grove, Ember, and other TIMES palettes ship.",
+        );
+    }
+    let loads_prefs_built = css_blobs.contains("runtime/v1/preferences")
+        || css_blobs.contains("applyUserPreferences")
+        || css_blobs.contains("syncPreferencesFromApi")
+        || css_blobs.contains("createTimesAipClient")
+        || css_blobs.contains("api.preferences");
+    if !loads_prefs_built {
+        r.error(
+            "/ui",
+            "Built bundle does not fetch user preferences. Use @times/aip-sdk createTimesAipClient (prefs sync) or call /api/v1/apps/runtime/v1/preferences, then rebuild.",
+        );
+    }
+    for id in [
+        "claude",
+        "discord",
+        "supabase",
+        "vercel",
+        "mono",
+        "notebook",
+        "light-green",
+        "zen",
+        "astro-vista",
+        "whatsapp",
+    ] {
+        let needle = format!("data-theme={id}");
+        let needle_quoted = format!("data-theme='{id}'");
+        let needle_dquoted = format!("data-theme=\"{id}\"");
+        if !(css_blobs.contains(&needle)
+            || css_blobs.contains(&needle_quoted)
+            || css_blobs.contains(&needle_dquoted))
+        {
+            r.error(
+                "/ui",
+                format!(
+                    "Built CSS is missing the `{id}` palette. Rebuilding without themes.css drops TIMES theme support."
+                ),
+            );
+            break;
+        }
+    }
+}
+
+fn entry_parent(root: &Path, entry: &str) -> Option<std::path::PathBuf> {
+    if entry.is_empty() {
+        return None;
+    }
+    let path = relative(root, entry);
+    path.parent().map(|p| p.to_path_buf())
+}
+
+fn collect_built_css(dir: &Path, depth: u8, out: &mut String) {
+    if depth > 8 || !dir.is_dir() {
+        return;
+    }
+    let entries = match fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if name.starts_with('.') || name == "node_modules" {
+            continue;
+        }
+        if path.is_dir() {
+            collect_built_css(&path, depth + 1, out);
+            continue;
+        }
+        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+        if ext != "css" && ext != "js" && ext != "html" {
+            continue;
+        }
+        if let Ok(text) = fs::read_to_string(&path) {
+            out.push_str(&text);
+            out.push('\n');
+        }
     }
 }
 
