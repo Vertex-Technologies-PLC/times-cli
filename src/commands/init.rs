@@ -529,14 +529,22 @@ const nextConfig = {
 export default nextConfig;
 "#;
 
-const NEXT_LAYOUT: &str = r#"import '@times/aip-sdk/tokens.css';
+const NEXT_LAYOUT: &str = r#"import type { ReactNode } from 'react';
+import Script from 'next/script';
+import { THEME_BOOT_SCRIPT } from '@times/aip-sdk';
+import '@times/aip-sdk/tokens.css';
 import '@times/aip-sdk/themes.css';
-import type { ReactNode } from 'react';
+import '@times/aip-sdk/theme-structure.css';
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
-    <html lang='en'>
-      <body>{children}</body>
+    <html lang='en' suppressHydrationWarning>
+      <body>
+        <Script id='times-theme-boot' strategy='beforeInteractive'>
+          {THEME_BOOT_SCRIPT}
+        </Script>
+        {children}
+      </body>
     </html>
   );
 }
@@ -625,7 +633,7 @@ pub fn scaffold(o: &Options) -> Vec<(String, String)> {
             files.push((
                 "index.html".into(),
                 format!(
-                    "<!doctype html>\n<html lang=\"en\">\n  <head>\n    <meta charset=\"utf-8\" />\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />\n    <title>{}</title>\n  </head>\n  <body>\n    <div id=\"app\"></div>\n    <script type=\"module\" src=\"/src/main.ts\"></script>\n  </body>\n</html>\n",
+                    "<!doctype html>\n<html lang=\"en\">\n  <head>\n    <script id=\"times-theme-boot\">(function(){{try{{var p=new URLSearchParams(location.search);var theme=p.get('theme');var mode=p.get('colorMode');var root=document.documentElement;if(theme&&/^[a-z0-9-]+$/.test(theme))root.setAttribute('data-theme',theme);if(mode==='dark'){{root.classList.add('dark');root.style.colorScheme='dark';}}else if(mode==='light'){{root.classList.remove('dark');root.style.colorScheme='light';}}}}catch(e){{}}}})();</script>\n    <meta charset=\"utf-8\" />\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />\n    <title>{}</title>\n  </head>\n  <body>\n    <div id=\"app\"></div>\n    <script type=\"module\" src=\"/src/main.ts\"></script>\n  </body>\n</html>\n",
                     html_escape(&o.name)
                 ),
             ));
@@ -636,7 +644,7 @@ pub fn scaffold(o: &Options) -> Vec<(String, String)> {
             files.push((
                 "index.html".into(),
                 format!(
-                    "<!doctype html>\n<html lang=\"en\">\n  <head>\n    <meta charset=\"utf-8\" />\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />\n    <title>{}</title>\n    <link rel=\"stylesheet\" href=\"./themes.css\" />\n    <link rel=\"stylesheet\" href=\"./style.css\" />\n  </head>\n  <body>\n    <h1 id=\"title\"></h1>\n    <p id=\"body\"></p>\n    <script src=\"./app.js\"></script>\n  </body>\n</html>\n",
+                    "<!doctype html>\n<html lang=\"en\">\n  <head>\n    <script id=\"times-theme-boot\">(function(){{try{{var p=new URLSearchParams(location.search);var theme=p.get('theme');var mode=p.get('colorMode');var root=document.documentElement;if(theme&&/^[a-z0-9-]+$/.test(theme))root.setAttribute('data-theme',theme);if(mode==='dark'){{root.classList.add('dark');root.style.colorScheme='dark';}}else if(mode==='light'){{root.classList.remove('dark');root.style.colorScheme='light';}}}}catch(e){{}}}})();</script>\n    <meta charset=\"utf-8\" />\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />\n    <title>{}</title>\n    <link rel=\"stylesheet\" href=\"./themes.css\" />\n    <link rel=\"stylesheet\" href=\"./style.css\" />\n  </head>\n  <body>\n    <h1 id=\"title\"></h1>\n    <p id=\"body\"></p>\n    <script src=\"./app.js\"></script>\n  </body>\n</html>\n",
                     html_escape(&o.name)
                 ),
             ));

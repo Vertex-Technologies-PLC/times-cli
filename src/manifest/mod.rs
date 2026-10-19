@@ -540,6 +540,15 @@ fn theme_adoption_checks(m: &Value, root: &Path, r: &mut Report) {
             "Import @times/aip-sdk/themes.css, or link themes.css, so palette type and structure match TIMES.",
         );
     }
+    let boots_palette = blob.contains("times-theme-boot")
+        || blob.contains("THEME_BOOT_SCRIPT")
+        || blob.contains("applyThemeFromLocation");
+    if !boots_palette {
+        r.error(
+            "/ui",
+            "Boot the TIMES palette with THEME_BOOT_SCRIPT or applyThemeFromLocation so the guest does not stay on the default sheet.",
+        );
+    }
     let follows_mode = blob.contains("colorMode")
         || blob.contains("@custom-variant dark")
         || blob.contains("classList.add('dark'")
@@ -808,6 +817,26 @@ mod tests {
         let r = validate(&sample(), Some(dir.path()));
         assert!(r.errors.iter().any(|e| e.message.contains("themes.css")));
         assert!(r.errors.iter().any(|e| e.message.contains("color mode")));
+        assert!(r
+            .errors
+            .iter()
+            .any(|e| e.message.contains("THEME_BOOT_SCRIPT")));
+    }
+
+    #[test]
+    fn palette_boot_is_required_even_when_themes_css_is_linked() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(
+            dir.path().join("index.html"),
+            "<link rel=\"stylesheet\" href=\"./themes.css\" />",
+        )
+        .unwrap();
+        fs::write(dir.path().join("app.ts"), "colorMode").unwrap();
+        let r = validate(&sample(), Some(dir.path()));
+        assert!(r
+            .errors
+            .iter()
+            .any(|e| e.message.contains("THEME_BOOT_SCRIPT")));
     }
 
     #[test]
