@@ -10,7 +10,7 @@ macOS and Linux:
 curl -fsSL https://developers.times.et/install.sh | sh
 ```
 
-zsh and bash ship a builtin named `times`. The installer disables it in your shell config so this CLI can run. The binary stays `times`. If an existing terminal still prints `too many arguments`, run `. ~/.config/times/shellenv` or open a new terminal.
+zsh and bash ship a builtin named `times`. The installer and `times setup-shell` disable it in your shell config so this CLI can run. The binary stays `times`. If an existing terminal still prints `too many arguments`, run `~/.local/bin/times setup-shell` then `. ~/.config/times/shellenv`, or open a new terminal.
 
 Windows (PowerShell):
 
@@ -48,7 +48,8 @@ times aip submit
 | `times auth list` / `times auth use <name>` / `times auth delete <name>` | List, switch and remove profiles. |
 | `times org list` / `times org use <slug>` | List and switch organizations. |
 | `times init [dir]` | Create a new AIP project. Creates a folder named after the slug unless `dir` is `.`. |
-| `times manifest validate` / `times manifest bump <level>` | Check or bump `times.aip.json`. |
+| `times manifest validate` / `times manifest bump <level>` | Check or bump `times.aip.json` (and `package.json` version). |
+| `times aip deploy --bump <level>` | Bump then stage via depot. |
 | `times dev` | Serve your build locally. |
 | `times aip list\|create\|info\|push\|submit\|status\|scan\|doctor\|listing\|origin\|delete\|open\|logs\|withdraw` | Manage AIPs and versions. |
 | `times stats` | Installs, usage and revenue. |

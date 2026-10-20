@@ -28,7 +28,8 @@ pub async fn run(ctx: &mut Ctx, cmd: AipCmd) -> anyhow::Result<()> {
             r#ref,
             follow,
             submit,
-        } => deploy(ctx, dir, remote, r#ref, follow, submit).await,
+            bump,
+        } => deploy(ctx, dir, remote, r#ref, follow, submit, bump).await,
         AipCmd::Submit { notes, version } => submit(ctx, notes, version).await,
         AipCmd::Status { slug, version } => status(ctx, slug, version).await,
         AipCmd::Withdraw { version, slug } => withdraw(ctx, slug, version).await,
@@ -225,8 +226,34 @@ async fn deploy(
     git_ref: String,
     follow: bool,
     submit_after: bool,
+    bump_level: Option<crate::manifest::bump::Level>,
 ) -> anyhow::Result<()> {
-    let loaded = load_manifest()?;
+    let project_dir = if dir.as_os_str() == "." {
+        PathBuf::from(".")
+    } else if dir.is_absolute() {
+        dir.clone()
+    } else {
+        std::env::current_dir()?.join(&dir)
+    };
+
+    if let Some(level) = bump_level {
+        let report = manifest::bump::bump_project(&project_dir, level)?;
+        if !ctx.out.json {
+            ctx.out
+                .success(format!("Bumped {} to {}", report.from, report.to));
+            if report.package_json {
+                ctx.out.info("Updated package.json version to match.");
+            }
+            if !report.catalogs.is_empty() {
+                ctx.out.info(format!(
+                    "Added changelog keys to {}. Replace the placeholder text before you submit.",
+                    report.catalogs.join(", ")
+                ));
+            }
+        }
+    }
+
+    let loaded = manifest::load(&project_dir)?;
     require_valid_manifest(ctx, &loaded)?;
     let m = &loaded.value;
     let slug = str_at(m, "/slug")
@@ -256,13 +283,7 @@ async fn deploy(
         }
         job
     } else {
-        let root = if dir.as_os_str() == "." {
-            loaded.root.clone()
-        } else if dir.is_absolute() {
-            dir
-        } else {
-            std::env::current_dir()?.join(dir)
-        };
+        let root = loaded.root.clone();
         if !ctx.out.json {
             ctx.out.step(1, 3, format!("Packing source for {slug}"));
         }

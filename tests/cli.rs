@@ -394,25 +394,19 @@ fn depot_job(status: &str) -> Value {
     })
 }
 
-async fn mock_depot_local_deploy(server: &MockServer, upload_path: &str) {
+async fn mock_depot_local_deploy(server: &MockServer) {
     Mock::given(method("POST"))
-        .and(path("/api/v1/depot/source-upload-url"))
+        .and(path("/api/v1/depot/source-upload"))
         .and(header("authorization", "Bearer pat-access"))
+        .and(header("content-type", "application/zip"))
         .respond_with(depot_ok(
             200,
             json!({
-                "upload_url": format!("{}{}", server.uri(), upload_path),
                 "storage_key": "cas/abc",
-                "sha256": "deadbeef"
+                "sha256": "deadbeef",
+                "deduped": false
             }),
         ))
-        .expect(1)
-        .mount(server)
-        .await;
-    Mock::given(method("PUT"))
-        .and(path(upload_path))
-        .and(header("content-type", "application/zip"))
-        .respond_with(ResponseTemplate::new(200))
         .expect(1)
         .mount(server)
         .await;
@@ -431,15 +425,55 @@ async fn mock_depot_local_deploy(server: &MockServer, upload_path: &str) {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn deploy_bump_updates_manifest_and_package_json() {
+    let server = MockServer::start().await;
+    let env = Env::new(&server);
+    mock_pat(&server).await;
+    mock_depot_local_deploy(&server).await;
+    let dir = scaffold(&env).await;
+    std::fs::write(
+        dir.join("package.json"),
+        r#"{"name":"demo-app","version":"1.0.0"}"#,
+    )
+    .unwrap();
+
+    let out = env
+        .run(
+            &dir,
+            &["aip", "deploy", "--bump", "patch", "--no-follow", "--json"],
+            Some("tdk_test"),
+        )
+        .await;
+    assert!(
+        out.status.success(),
+        "code={:?} stdout={} stderr={}",
+        out.status.code(),
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let manifest: Value =
+        serde_json::from_str(&std::fs::read_to_string(dir.join("times.aip.json")).unwrap())
+            .unwrap();
+    assert_eq!(manifest["version"], "1.0.1");
+    let pkg: Value =
+        serde_json::from_str(&std::fs::read_to_string(dir.join("package.json")).unwrap()).unwrap();
+    assert_eq!(pkg["version"], "1.0.1");
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn deploy_uploads_source_and_queues_job() {
     let server = MockServer::start().await;
     let env = Env::new(&server);
     mock_pat(&server).await;
-    mock_depot_local_deploy(&server, "/upload/src").await;
+    mock_depot_local_deploy(&server).await;
     let dir = scaffold(&env).await;
 
     let out = env
-        .run(&dir, &["aip", "deploy", "--json"], Some("tdk_test"))
+        .run(
+            &dir,
+            &["aip", "deploy", "--no-follow", "--json"],
+            Some("tdk_test"),
+        )
         .await;
     assert!(
         out.status.success(),
@@ -454,11 +488,13 @@ async fn deploy_uploads_source_and_queues_job() {
     assert_eq!(body["slug"], "demo-app");
 
     let requests = server.received_requests().await.unwrap();
-    let put: &Request = requests
+    let upload: &Request = requests
         .iter()
-        .find(|r| r.method.as_str() == "PUT")
+        .find(|r| {
+            r.method.as_str() == "POST" && r.url.path() == "/api/v1/depot/source-upload"
+        })
         .unwrap();
-    assert_eq!(&put.body[..2], b"PK");
+    assert_eq!(&upload.body[..2], b"PK");
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -466,7 +502,7 @@ async fn deploy_follow_submit_after_success() {
     let server = MockServer::start().await;
     let env = Env::new(&server);
     mock_pat(&server).await;
-    mock_depot_local_deploy(&server, "/upload/follow").await;
+    mock_depot_local_deploy(&server).await;
     let dir = scaffold(&env).await;
     let base = "/api/v1/developers/aips/demo-app";
 
@@ -491,7 +527,7 @@ async fn deploy_follow_submit_after_success() {
     let out = env
         .run(
             &dir,
-            &["aip", "deploy", "--follow", "--submit", "--json"],
+            &["aip", "deploy", "--submit", "--json"],
             Some("tdk_test"),
         )
         .await;
@@ -897,6 +933,7 @@ async fn deploy_remote_queues_clone_job() {
                 "deploy",
                 "--remote",
                 "https://github.com/acme/demo-app",
+                "--no-follow",
                 "--json",
             ],
             Some("tdk_test"),

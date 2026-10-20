@@ -33,19 +33,37 @@ pub async fn run(out: &Output) -> anyhow::Result<()> {
     }
 
     run_installer()?;
+    let shell_applied = apply_shell_after_upgrade();
 
     if out.json {
         return out.json(&json!({
             "current": current.to_string(),
             "latest": latest.map(|v| v.to_string()),
             "upgraded": true,
+            "shellConfigured": shell_applied,
             "changelog": CHANGELOG_URL,
         }));
     }
     out.success("Installer finished.");
+    if shell_applied {
+        out.info(
+            "Shell config updated so the TIMES CLI wins over the POSIX times builtin.",
+        );
+        out.info("Open a new terminal, or run: . ~/.config/times/shellenv");
+    }
     out.info("Run `times --version` to confirm. Changelog:");
     out.info(format!("  {CHANGELOG_URL}"));
     Ok(())
+}
+
+fn apply_shell_after_upgrade() -> bool {
+    if cfg!(windows) {
+        return false;
+    }
+    let Ok(config_dir) = crate::config::config_dir() else {
+        return false;
+    };
+    matches!(crate::shell::ensure(&config_dir), Ok(Some(_)))
 }
 
 fn run_installer() -> anyhow::Result<()> {

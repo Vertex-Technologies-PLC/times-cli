@@ -148,6 +148,47 @@ pub fn add_catalog_keys(
     Ok(touched)
 }
 
+pub fn sync_package_json(root: &Path, version: &str) -> anyhow::Result<bool> {
+    let path = root.join("package.json");
+    if !path.exists() {
+        return Ok(false);
+    }
+    let text = fs::read_to_string(&path)
+        .with_context(|| format!("Could not read {}", path.display()))?;
+    let mut pkg: Value = serde_json::from_str(&text)
+        .map_err(|e| CliError::validation(format!("package.json is not valid JSON: {e}")))?;
+    if str_at(&pkg, "/version") == Some(version) {
+        return Ok(false);
+    }
+    pkg["version"] = json!(version);
+    let mut out = serde_json::to_string_pretty(&pkg)?;
+    out.push('\n');
+    fs::write(&path, out).with_context(|| format!("Could not write {}", path.display()))?;
+    Ok(true)
+}
+
+#[derive(Debug, Clone)]
+pub struct BumpReport {
+    pub from: String,
+    pub to: String,
+    pub catalogs: Vec<String>,
+    pub package_json: bool,
+}
+
+pub fn bump_project(dir: &Path, level: Level) -> anyhow::Result<BumpReport> {
+    let mut loaded = super::load(dir)?;
+    let (from, to) = apply(&mut loaded.value, level, &today())?;
+    super::save(&loaded.path, &loaded.value)?;
+    let catalogs = add_catalog_keys(&loaded.value, &loaded.root, &to)?;
+    let package_json = sync_package_json(&loaded.root, &to)?;
+    Ok(BumpReport {
+        from,
+        to,
+        catalogs,
+        package_json,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -214,5 +255,21 @@ mod tests {
         assert!(add_catalog_keys(&m, dir.path(), "1.1.0")
             .unwrap()
             .is_empty());
+    }
+
+    #[test]
+    fn sync_package_json_updates_version() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(
+            dir.path().join("package.json"),
+            r#"{"name":"demo","version":"1.0.0"}"#,
+        )
+        .unwrap();
+        assert!(sync_package_json(dir.path(), "1.0.1").unwrap());
+        let pkg: Value =
+            serde_json::from_str(&fs::read_to_string(dir.path().join("package.json")).unwrap())
+                .unwrap();
+        assert_eq!(pkg["version"], "1.0.1");
+        assert!(!sync_package_json(dir.path(), "1.0.1").unwrap());
     }
 }

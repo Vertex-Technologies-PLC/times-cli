@@ -295,6 +295,9 @@ pub enum AipCmd {
         /// After a successful deploy, submit the staged version for review
         #[arg(long)]
         submit: bool,
+        /// Bump times.aip.json (and package.json) before deploying. Local deploys only
+        #[arg(long, value_enum, value_name = "LEVEL", conflicts_with = "remote")]
+        bump: Option<Level>,
     },
     /// Scan the project (local by default, or via depot with --remote)
     Scan {

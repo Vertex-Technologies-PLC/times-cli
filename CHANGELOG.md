@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.11
+
+- `times aip deploy --bump <major|minor|patch>` bumps `times.aip.json` (and `package.json` when present) before packing and staging. Same as `times manifest bump`, then deploy.
+- `times manifest bump` also syncs `package.json` version when that file exists.
+- First CLI run and `times upgrade` write the shellenv hook that disables the POSIX `times` builtin. cargo-dist install success text points at `~/.local/bin/times setup-shell` so the builtin cannot block the fix.
+
 ## 0.4.10
 
 - Local deploy and `times aip scan --remote` upload source through `POST /api/v1/depot/source-upload` (gateway → depot → MinIO). Fixes Cloudflare 522 from public MinIO presign URLs.

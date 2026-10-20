@@ -15,5 +15,5 @@ targets = ["aarch64-apple-darwin", "aarch64-unknown-linux-gnu", "x86_64-apple-da
 hosting = "github"
 # Install next to other user binaries, not rustup's CARGO_HOME
 install-path = "$HOME/.local/bin"
-# zsh and bash ship a builtin named times. The developers installer disables it.
-install-success-msg = "If `times` prints \"too many arguments\", the POSIX times builtin is winning. Fix: curl -fsSL https://developers.times.et/install.sh | sh"
+# zsh and bash ship a builtin named times. Prefer the full binary path so setup-shell runs.
+install-success-msg = "If `times` prints \"too many arguments\", the POSIX builtin is winning. Fix: ~/.local/bin/times setup-shell && . ~/.config/times/shellenv"

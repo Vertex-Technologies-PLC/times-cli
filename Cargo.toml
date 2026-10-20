@@ -1,6 +1,6 @@
 [package]
 name = "times"
-version = "0.4.10"
+version = "0.4.11"
 edition = "2021"
 rust-version = "1.80"
 description = "Command line tool for building and publishing TIMES AIPs"

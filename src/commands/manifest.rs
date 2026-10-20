@@ -13,18 +13,23 @@ pub fn run(out: &Output, cmd: ManifestCmd) -> anyhow::Result<()> {
     match cmd {
         ManifestCmd::Validate { dir } => validate(out, &dir),
         ManifestCmd::Bump { level, dir } => {
-            let mut loaded = manifest::load(&dir)?;
-            let (from, to) = bump::apply(&mut loaded.value, level, &bump::today())?;
-            manifest::save(&loaded.path, &loaded.value)?;
-            let touched = bump::add_catalog_keys(&loaded.value, &loaded.root, &to)?;
+            let report = bump::bump_project(&dir, level)?;
             if out.json {
-                return out.json(&json!({ "from": from, "to": to, "catalogs": touched }));
+                return out.json(&json!({
+                    "from": report.from,
+                    "to": report.to,
+                    "catalogs": report.catalogs,
+                    "packageJson": report.package_json,
+                }));
             }
-            out.success(format!("Bumped {from} to {to}"));
-            if !touched.is_empty() {
+            out.success(format!("Bumped {} to {}", report.from, report.to));
+            if report.package_json {
+                out.info("Updated package.json version to match.");
+            }
+            if !report.catalogs.is_empty() {
                 out.info(format!(
                     "Added changelog keys to {}. Replace the placeholder text before you submit.",
-                    touched.join(", ")
+                    report.catalogs.join(", ")
                 ));
             }
             Ok(())

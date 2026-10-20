@@ -13,11 +13,13 @@ mod upgrade;
 
 use crate::cli::{Cli, Command, GlobalArgs};
 use crate::context::{Ctx, CtxOptions};
+use crate::shell;
 use crate::ui::Output;
 
 pub async fn run(cli: Cli) -> anyhow::Result<()> {
     let g = cli.global;
     let out = Output::new(g.json, g.no_input, g.yes);
+    ensure_shell_hook(&cli.command, &out);
 
     match cli.command {
         Command::Completions(args) => completions::run(args),
@@ -43,4 +45,26 @@ fn session(g: GlobalArgs, out: Output) -> anyhow::Result<Ctx> {
         org: g.org,
         out,
     })
+}
+
+fn ensure_shell_hook(cmd: &Command, out: &Output) {
+    if cfg!(windows) || !out.interactive {
+        return;
+    }
+    if matches!(
+        cmd,
+        Command::Completions(_) | Command::SetupShell(_) | Command::Upgrade
+    ) {
+        return;
+    }
+    let Ok(config_dir) = crate::config::config_dir() else {
+        return;
+    };
+    let Ok(Some(report)) = shell::ensure(&config_dir) else {
+        return;
+    };
+    out.info(
+        "Configured your shell so the TIMES CLI wins over the POSIX times builtin.",
+    );
+    out.info(format!("This terminal: . {}", report.shellenv.display()));
 }

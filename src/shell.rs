@@ -68,6 +68,29 @@ pub fn apply(config_dir: &Path, bin_dirs: &[PathBuf]) -> anyhow::Result<SetupRep
     Ok(SetupReport { shellenv, rc_files })
 }
 
+pub fn is_configured(config_dir: &Path) -> bool {
+    let shellenv = config_dir.join("shellenv");
+    if !shellenv.is_file() {
+        return false;
+    }
+    let Ok(targets) = rc_targets() else {
+        return false;
+    };
+    targets.iter().any(|path| {
+        path.is_file()
+            && fs::read_to_string(path)
+                .map(|text| text.contains(RC_MARKER))
+                .unwrap_or(false)
+    })
+}
+
+pub fn ensure(config_dir: &Path) -> anyhow::Result<Option<SetupReport>> {
+    if is_configured(config_dir) {
+        return Ok(None);
+    }
+    Ok(Some(apply(config_dir, &default_bin_dirs())?))
+}
+
 fn rc_snippet(shellenv: &Path) -> String {
     let path = shellenv.display();
     format!("{RC_MARKER}\n[ -f \"{path}\" ] && . \"{path}\"\n")
@@ -188,5 +211,22 @@ mod tests {
         let out = inject_completion_guard(clap_complete::Shell::Zsh, script);
         assert!(out.starts_with("#compdef times\n"));
         assert!(out.contains("disable times"));
+    }
+
+    #[test]
+    fn ensure_is_idempotent() {
+        let home = TempDir::new().unwrap();
+        let config = home.path().join("config");
+        let prev_home = env::var_os("HOME");
+        env::set_var("HOME", home.path());
+        let zshrc = home.path().join(".zshrc");
+        fs::write(&zshrc, "").unwrap();
+        assert!(ensure(&config).unwrap().is_some());
+        assert!(is_configured(&config));
+        assert!(ensure(&config).unwrap().is_none());
+        match prev_home {
+            Some(v) => env::set_var("HOME", v),
+            None => env::remove_var("HOME"),
+        }
     }
 }
