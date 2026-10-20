@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.10
+
+- Local deploy and `times aip scan --remote` upload source through `POST /api/v1/depot/source-upload` (gateway → depot → MinIO). Fixes Cloudflare 522 from public MinIO presign URLs.
+- Upload progress bar, retries on edge 521–524, and job follow with streamed build logs stay the default.
+
 ## 0.4.9
 
 - `times aip deploy` and `times aip scan --remote` follow depot jobs by default (use `--no-follow` to exit after queue). Progress steps, upload bar, status labels, and streamed build logs print while the job runs.

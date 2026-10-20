@@ -268,15 +268,6 @@ pub struct Listing {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct SourceUploadTicket {
-    pub upload_url: String,
-    #[serde(default)]
-    pub storage_key: Option<String>,
-    #[serde(default)]
-    pub sha256: Option<String>,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct DepotJob {
     pub id: String,
     pub slug: String,

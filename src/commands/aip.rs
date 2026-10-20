@@ -1,14 +1,12 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use futures_util::stream;
 use serde_json::{json, Value};
 
 use crate::api::types::{
-    Aip, DepotJob, DepotJobLog, DevMe, Items, Listing, SourceUploadTicket, Submission,
-    SubmissionDetail,
+    Aip, DepotJob, DepotJobLog, DevMe, Items, Listing, Submission, SubmissionDetail,
 };
-use crate::api::{network_error, seg};
+use crate::api::seg;
 use crate::bundle::{self, human_size, MAX_BUNDLE_BYTES};
 use crate::cli::{AipCmd, ListingCmd, OriginCmd};
 use crate::context::Ctx;
@@ -17,7 +15,6 @@ use crate::hosting;
 use crate::manifest::{self, str_at, Loaded};
 use crate::ui::{or_dash, short_date};
 
-const CHUNK: usize = 64 * 1024;
 const DEVELOPERS_ORIGIN: &str = "https://developers.times.et";
 
 pub async fn run(ctx: &mut Ctx, cmd: AipCmd) -> anyhow::Result<()> {
@@ -267,7 +264,7 @@ async fn deploy(
             std::env::current_dir()?.join(dir)
         };
         if !ctx.out.json {
-            ctx.out.step(1, 4, format!("Packing source for {slug}"));
+            ctx.out.step(1, 3, format!("Packing source for {slug}"));
         }
         let pack_spin = ctx.out.spinner("Packing source…");
         let packed = bundle::pack_source(&root)?;
@@ -291,30 +288,18 @@ async fn deploy(
                     "Large upload. Prefer `times aip deploy --remote <github-url>` for repos over ~8 MB.",
                 );
             }
-            ctx.out.step(2, 4, "Requesting upload URL");
+            ctx.out.step(2, 3, "Uploading source to depot");
         }
-        let ticket: SourceUploadTicket = post_with_retry(
-            ctx,
-            "/api/v1/depot/source-upload-url",
-            &token,
-            &json!({
-                "sha256": packed.sha256,
-                "content_type": bundle::CONTENT_TYPE,
-            }),
-        )
-        .await?;
+        let source_sha = packed.sha256.clone();
+        upload_source(ctx, &token, source_sha.clone(), packed.bytes).await?;
         if !ctx.out.json {
-            ctx.out.step(3, 4, "Uploading source");
-        }
-        upload_bytes(ctx, &ticket.upload_url, packed.bytes, bundle::CONTENT_TYPE).await?;
-        if !ctx.out.json {
-            ctx.out.step(4, 4, "Queuing depot job");
+            ctx.out.step(3, 3, "Queuing depot job");
         }
         let body = json!({
             "slug": slug,
             "kind": "build_and_stage",
             "trigger_kind": "cli_local",
-            "source_blob_sha": packed.sha256,
+            "source_blob_sha": source_sha,
             "version": version,
         });
         let job: DepotJob = post_with_retry(ctx, "/api/v1/depot/jobs", &token, &body).await?;
@@ -510,11 +495,11 @@ async fn post_with_retry<T: serde::de::DeserializeOwned, B: serde::Serialize>(
     }
 }
 
-async fn upload_bytes(
+async fn upload_source(
     ctx: &Ctx,
-    upload_url: &str,
+    token: &str,
+    sha256: String,
     bytes: Vec<u8>,
-    content_type: &str,
 ) -> anyhow::Result<()> {
     let total = bytes.len() as u64;
     let mut attempt = 0u32;
@@ -522,63 +507,41 @@ async fn upload_bytes(
         attempt += 1;
         let bar = ctx.out.bytes_bar(total, "Uploading");
         let progress = bar.clone();
-        let chunks: Vec<Vec<u8>> = bytes.chunks(CHUNK).map(<[u8]>::to_vec).collect();
-        let body = stream::iter(chunks.into_iter().map(move |c| {
-            progress.inc(c.len() as u64);
-            Ok::<_, std::io::Error>(c)
-        }));
         let result = ctx
             .client
-            .http()
-            .put(upload_url)
-            .timeout(Duration::from_secs(600))
-            .header("Content-Type", content_type)
-            .header("Content-Length", total)
-            .body(reqwest::Body::wrap_stream(body))
-            .send()
+            .post_bytes::<Value>(
+                "/api/v1/depot/source-upload",
+                token,
+                bytes.clone(),
+                bundle::CONTENT_TYPE,
+                &sha256,
+                move |n| progress.inc(n),
+            )
             .await;
         bar.finish_and_clear();
         match result {
-            Ok(resp) => {
-                let status = resp.status().as_u16();
-                if (200..300).contains(&status) {
-                    if !ctx.out.json {
+            Ok(data) => {
+                if !ctx.out.json {
+                    if data.get("deduped").and_then(|v| v.as_bool()) == Some(true) {
+                        ctx.out.success(format!(
+                            "Source already on depot ({})",
+                            human_size(total)
+                        ));
+                    } else {
                         ctx.out.success(format!("Uploaded {}", human_size(total)));
                     }
-                    return Ok(());
                 }
-                if (521..=524).contains(&status) && attempt < 4 {
-                    if !ctx.out.json {
-                        ctx.out.warn(format!(
-                            "Upload hit HTTP {status} (attempt {attempt}/3). Retrying…"
-                        ));
-                    }
-                    tokio::time::sleep(Duration::from_secs(2u64.pow(attempt))).await;
-                    continue;
-                }
-                return Err(CliError::Api {
-                    status,
-                    code: "SOURCE_UPLOAD_FAILED".into(),
-                    message: if (521..=524).contains(&status) {
-                        format!(
-                            "Source upload failed with HTTP {status}. The storage edge could not reach MinIO. Check MINIO_PUBLIC_ENDPOINT on depot, or deploy with --remote."
-                        )
-                    } else {
-                        format!("The source upload failed with HTTP {status}.")
-                    },
-                    details: None,
-                }
-                .into());
+                return Ok(());
             }
-            Err(e) if attempt < 4 => {
+            Err(err) if is_retryable_edge(&err) && attempt < 4 => {
                 if !ctx.out.json {
                     ctx.out.warn(format!(
-                        "Upload network error (attempt {attempt}/3): {e}. Retrying…"
+                        "Upload retry {attempt}/3 after a transient edge error…"
                     ));
                 }
                 tokio::time::sleep(Duration::from_secs(2u64.pow(attempt))).await;
             }
-            Err(e) => return Err(network_error(e)),
+            Err(err) => return Err(err),
         }
     }
 }
@@ -815,19 +778,10 @@ async fn scan_remote(ctx: &mut Ctx, loaded: &Loaded, follow: bool) -> anyhow::Re
             packed.files.len(),
             human_size(size)
         ));
-        ctx.out.step(2, 3, "Uploading source");
+        ctx.out.step(2, 3, "Uploading source to depot");
     }
-    let ticket: SourceUploadTicket = post_with_retry(
-        ctx,
-        "/api/v1/depot/source-upload-url",
-        &token,
-        &json!({
-            "sha256": packed.sha256,
-            "content_type": bundle::CONTENT_TYPE,
-        }),
-    )
-    .await?;
-    upload_bytes(ctx, &ticket.upload_url, packed.bytes, bundle::CONTENT_TYPE).await?;
+    let source_sha = packed.sha256.clone();
+    upload_source(ctx, &token, source_sha.clone(), packed.bytes).await?;
     if !ctx.out.json {
         ctx.out.step(3, 3, "Queuing depot scan");
     }
@@ -835,7 +789,7 @@ async fn scan_remote(ctx: &mut Ctx, loaded: &Loaded, follow: bool) -> anyhow::Re
         "slug": slug,
         "kind": "scan_only",
         "trigger_kind": "cli_local",
-        "source_blob_sha": packed.sha256,
+        "source_blob_sha": source_sha,
         "version": version,
     });
     let job: DepotJob = post_with_retry(ctx, "/api/v1/depot/jobs", &token, &body).await?;

@@ -36,10 +36,6 @@ impl Client {
         &self.base
     }
 
-    pub fn http(&self) -> &reqwest::Client {
-        &self.http
-    }
-
     fn url(&self, path: &str) -> String {
         format!("{}{}", self.base, path)
     }
@@ -127,6 +123,50 @@ impl Client {
         token: Option<&str>,
     ) -> anyhow::Result<T> {
         self.send(Method::DELETE, path, token, &[], None).await
+    }
+
+    pub async fn post_bytes<T: DeserializeOwned>(
+        &self,
+        path: &str,
+        token: &str,
+        bytes: Vec<u8>,
+        content_type: &str,
+        sha256_hex: &str,
+        on_progress: impl Fn(u64) + Send + Sync + 'static,
+    ) -> anyhow::Result<T> {
+        use futures_util::stream;
+        const CHUNK: usize = 64 * 1024;
+        let total = bytes.len() as u64;
+        let chunks: Vec<Vec<u8>> = bytes.chunks(CHUNK).map(<[u8]>::to_vec).collect();
+        let body = stream::iter(chunks.into_iter().map(move |c| {
+            on_progress(c.len() as u64);
+            Ok::<_, std::io::Error>(c)
+        }));
+        let resp = self
+            .http
+            .post(self.url(path))
+            .timeout(Duration::from_secs(600))
+            .bearer_auth(token)
+            .header("Accept", "application/json")
+            .header("Content-Type", content_type)
+            .header("Content-Length", total)
+            .header("X-Content-SHA256", sha256_hex)
+            .body(reqwest::Body::wrap_stream(body))
+            .send()
+            .await
+            .map_err(network_error)?;
+        let status = resp.status().as_u16();
+        let text = resp.text().await.map_err(network_error)?;
+        let data = envelope::parse(status, &text)?;
+        serde_json::from_value(data).map_err(|e| {
+            CliError::Api {
+                status,
+                code: "UNEXPECTED_RESPONSE".into(),
+                message: format!("The API returned a response the CLI does not understand: {e}"),
+                details: None,
+            }
+            .into()
+        })
     }
 }
 
