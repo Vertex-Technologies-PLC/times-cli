@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.18
+
+- Deploy source packs skip local build junk: `.next`, `out`, `dist`, `build`, caches (`.turbo`, `.vercel`, `.cache`, …), coverage, IDE folders, `.env*`, and `*.tsbuildinfo`. Nested `vendor/*/dist` is still packed.
+
 ## 0.4.17
 
 - Manifest UI checks require `@times-aip/aip-sdk`.

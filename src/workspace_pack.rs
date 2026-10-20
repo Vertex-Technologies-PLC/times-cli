@@ -322,21 +322,16 @@ fn copy_if_file(source: &Path, dest: &Path, rel: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn is_env_secret_name(name: &str) -> bool {
-    name == ".env" || name.starts_with(".env.")
-}
-
 fn copy_tree(from: &Path, to: &Path) -> anyhow::Result<()> {
     fs::create_dir_all(to)?;
     for entry in walkdir::WalkDir::new(from)
         .follow_links(false)
         .into_iter()
         .filter_entry(|e| {
-            e.depth() == 0
-                || !matches!(
-                    e.file_name().to_string_lossy().as_ref(),
-                    "node_modules" | ".git" | "target" | ".DS_Store" | ".times"
-                )
+            !crate::pack_ignore::should_skip_pack_entry(
+                e.depth(),
+                &e.file_name().to_string_lossy(),
+            )
         })
     {
         let entry = entry?;
@@ -344,7 +339,7 @@ fn copy_tree(from: &Path, to: &Path) -> anyhow::Result<()> {
             continue;
         }
         let name = entry.file_name().to_string_lossy();
-        if is_env_secret_name(&name) {
+        if crate::pack_ignore::should_skip_pack_file(&name) {
             continue;
         }
         let rel = entry.path().strip_prefix(from)?;
@@ -364,27 +359,28 @@ pub fn collect_staged_files(staged_root: &Path) -> anyhow::Result<BTreeMap<Strin
         .follow_links(false)
         .into_iter()
         .filter_entry(|e| {
-            e.depth() == 0
-                || !matches!(
-                    e.file_name().to_string_lossy().as_ref(),
-                    "node_modules" | ".git" | "target" | ".DS_Store"
-                )
+            !crate::pack_ignore::should_skip_pack_entry(
+                e.depth(),
+                &e.file_name().to_string_lossy(),
+            )
         })
     {
         let entry = entry?;
-        if entry.file_type().is_file() {
-            let rel = entry
-                .path()
-                .strip_prefix(staged_root)?
-                .components()
-                .map(|c| c.as_os_str().to_string_lossy().into_owned())
-                .collect::<Vec<_>>()
-                .join("/");
-            if rel.ends_with(".zip") {
-                continue;
-            }
-            files.insert(rel, entry.path().to_path_buf());
+        if !entry.file_type().is_file() {
+            continue;
         }
+        let name = entry.file_name().to_string_lossy();
+        if crate::pack_ignore::should_skip_pack_file(&name) {
+            continue;
+        }
+        let rel = entry
+            .path()
+            .strip_prefix(staged_root)?
+            .components()
+            .map(|c| c.as_os_str().to_string_lossy().into_owned())
+            .collect::<Vec<_>>()
+            .join("/");
+        files.insert(rel, entry.path().to_path_buf());
     }
     if files.is_empty() {
         return Err(CliError::usage("Nothing to zip in this folder.").into());
@@ -426,7 +422,12 @@ mod tests {
                 .unwrap();
         let dep = pkg["dependencies"]["@times-aip/aip-sdk"].as_str().unwrap();
         assert!(dep.starts_with("file:./vendor/"));
-        assert!(staged.staged_root.join("vendor/times-aip-sdk/package.json").is_file());
+        let vendor_rel = dep.trim_start_matches("file:./");
+        assert!(
+            staged.staged_root.join(vendor_rel).join("package.json").is_file(),
+            "missing {vendor_rel}/package.json"
+        );
+        assert!(staged.staged_root.join(vendor_rel).join("dist").is_dir());
         assert!(staged.staged_root.join("package-lock.json").is_file());
         assert!(!staged.staged_root.join("bun.lock").is_file());
     }

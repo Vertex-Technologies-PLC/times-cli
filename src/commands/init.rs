@@ -418,7 +418,7 @@ const ICON: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 6
 const ICON_DARK: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="14" fill="#0f172a"/><path d="M20 22h24v6H35v16h-6V28h-9z" fill="#e2e8f0"/></svg>
 "##;
 
-const GITIGNORE: &str = "node_modules\ndist\nout\n.next\n*.zip\n.DS_Store\n.times/\n";
+const GITIGNORE: &str = "node_modules\ndist\nout\nbuild\n.next\n.turbo\n.vercel\n.cache\ncoverage\n*.tsbuildinfo\n*.zip\n.DS_Store\n.times/\n.env\n.env.*\n";
 
 const MAIN_TS: &str = r#"import '@times-aip/aip-sdk/tokens.css';
 import '@times-aip/aip-sdk/themes.css';

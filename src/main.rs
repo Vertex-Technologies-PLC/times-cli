@@ -11,6 +11,7 @@ mod hosting;
 mod manifest;
 mod netutil;
 mod origin;
+mod pack_ignore;
 mod scan;
 mod shell;
 mod templates;

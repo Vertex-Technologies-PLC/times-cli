@@ -15,8 +15,6 @@ use crate::manifest::{relative, str_at, LOCALES, MANIFEST_FILE};
 pub const MAX_BUNDLE_BYTES: u64 = 50 * 1024 * 1024;
 pub const CONTENT_TYPE: &str = "application/zip";
 
-const IGNORED: &[&str] = &["node_modules", ".git", "target", ".DS_Store", ".times"];
-
 pub struct Bundle {
     pub bytes: Vec<u8>,
     pub sha256: String,
@@ -35,23 +33,29 @@ fn archive_name(root: &Path, path: &Path) -> anyhow::Result<String> {
         .join("/"))
 }
 
-fn ignored(name: &str) -> bool {
-    IGNORED.contains(&name) || name.ends_with(".zip")
-}
-
 fn add_dir(root: &Path, dir: &Path, files: &mut BTreeMap<String, PathBuf>) -> anyhow::Result<()> {
     let walker = WalkDir::new(dir)
         .follow_links(false)
         .into_iter()
-        .filter_entry(|e| e.depth() == 0 || !ignored(&e.file_name().to_string_lossy()));
+        .filter_entry(|e| {
+            !crate::pack_ignore::should_skip_pack_entry(
+                e.depth(),
+                &e.file_name().to_string_lossy(),
+            )
+        });
     for entry in walker {
         let entry = entry?;
-        if entry.file_type().is_file() {
-            files.insert(
-                archive_name(root, entry.path())?,
-                entry.path().to_path_buf(),
-            );
+        if !entry.file_type().is_file() {
+            continue;
         }
+        let name = entry.file_name().to_string_lossy();
+        if crate::pack_ignore::should_skip_pack_file(&name) {
+            continue;
+        }
+        files.insert(
+            archive_name(root, entry.path())?,
+            entry.path().to_path_buf(),
+        );
     }
     Ok(())
 }
@@ -239,9 +243,17 @@ mod tests {
         let (dir, mut m) = project();
         m["ui"]["entry"] = json!("./index.html");
         fs::write(dir.path().join("index.html"), "<html></html>").unwrap();
+        fs::create_dir_all(dir.path().join(".next/cache")).unwrap();
+        fs::write(dir.path().join(".next/cache/x"), "x").unwrap();
+        fs::create_dir_all(dir.path().join("out")).unwrap();
+        fs::write(dir.path().join("out/index.html"), "<html/>").unwrap();
+        fs::write(dir.path().join("tsconfig.tsbuildinfo"), "{}").unwrap();
         let files = collect(dir.path(), &m, None).unwrap();
         assert!(files.contains_key("index.html"));
         assert!(!files.keys().any(|f| f.starts_with("node_modules")));
+        assert!(!files.keys().any(|f| f.starts_with(".next")));
+        assert!(!files.keys().any(|f| f.starts_with("out/")));
+        assert!(!files.keys().any(|f| f.ends_with(".tsbuildinfo")));
     }
 
     #[test]
