@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.8
+
+- `times aip scan --remote` uploads source and runs an authoritative depot `scan_only` job (`--follow` polls until done).
+- `times aip retry <job-id>` rebuilds a failed, cancelled, or timed-out depot job.
+- Default developer PAT create includes `depot:read`, `depot:deploy`, and `depot:repos`.
+
 ## 0.4.7
 
 - `times aip deploy` zips the project and stages via depot, or queues a remote build with `--remote <github_url>`.
