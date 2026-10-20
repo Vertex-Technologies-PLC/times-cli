@@ -23,7 +23,7 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         Command::Completions(args) => completions::run(args),
         Command::SetupShell(args) => setup_shell::run(&out, args),
         Command::Upgrade => upgrade::run(&out).await,
-        Command::Init(args) => init::run(&out, args),
+        Command::Init(args) => init::run(&out, args).await,
         Command::Manifest(cmd) => manifest::run(&out, cmd),
         Command::Dev(args) => dev::run(&out, args).await,
         Command::Auth(cmd) => auth::run(&mut session(g, out)?, cmd).await,

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.9
+
+- `times aip deploy` and `times aip scan --remote` follow depot jobs by default (use `--no-follow` to exit after queue). Progress steps, upload bar, status labels, and streamed build logs print while the job runs.
+- Source upload retries on Cloudflare edge failures (HTTP 521–524) and surfaces a clear MinIO / `--remote` hint.
+- `times init` fetches the matching framework folder from `times-aip-templates` (vite, static, next), then writes a fresh manifest and catalogs. Falls back to the built-in scaffold offline.
+- Local `times aip scan` prints numbered steps while it runs.
+
 ## 0.4.8
 
 - `times aip scan --remote` uploads source and runs an authoritative depot `scan_only` job (`--follow` polls until done).

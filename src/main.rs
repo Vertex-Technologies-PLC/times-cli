@@ -13,6 +13,7 @@ mod netutil;
 mod origin;
 mod scan;
 mod shell;
+mod templates;
 mod ui;
 mod update;
 

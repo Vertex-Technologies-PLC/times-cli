@@ -110,7 +110,7 @@ fn folder_name(p: &Path) -> String {
         .unwrap_or_else(|| "my-aip".into())
 }
 
-pub fn run(out: &Output, args: InitArgs) -> anyhow::Result<()> {
+pub async fn run(out: &Output, args: InitArgs) -> anyhow::Result<()> {
     let cwd = std::env::current_dir()?;
     let in_place = args.dir.as_ref().is_some_and(|d| is_cwd_marker(d));
 
@@ -188,15 +188,15 @@ pub fn run(out: &Output, args: InitArgs) -> anyhow::Result<()> {
     };
 
     let opts = Options {
-        slug,
-        name,
+        slug: slug.clone(),
+        name: name.clone(),
         kind,
         framework,
         mode,
         hosting,
         entry_url,
     };
-    let files = scaffold(&opts);
+    let files = resolve_scaffold(out, &opts).await?;
 
     let conflicts: Vec<&String> = files
         .iter()
@@ -223,9 +223,19 @@ pub fn run(out: &Output, args: InitArgs) -> anyhow::Result<()> {
         fs::write(&path, content).with_context(|| format!("Could not write {}", path.display()))?;
     }
 
-    let manifest_value: Value = serde_json::from_str(&files[0].1)?;
+    let manifest_src = files
+        .iter()
+        .find(|(p, _)| p == MANIFEST_FILE)
+        .map(|(_, c)| c.as_str())
+        .ok_or_else(|| CliError::validation("Scaffold is missing times.aip.json."))?;
+    let manifest_value: Value = serde_json::from_str(manifest_src)?;
     let report = manifest::validate(&manifest_value, None);
-    debug_assert!(report.valid, "{:?}", report.errors);
+    if !report.valid {
+        return Err(CliError::validation(format!(
+            "Scaffolded manifest is invalid: {:?}",
+            report.errors
+        )));
+    }
 
     if out.json {
         return out.json(&json!({
@@ -645,6 +655,50 @@ const TSCONFIG_NEXT: &str = r#"{
   "exclude": ["node_modules"]
 }
 "#;
+
+async fn resolve_scaffold(out: &Output, opts: &Options) -> anyhow::Result<Vec<(String, String)>> {
+    let spin = out.spinner(format!(
+        "Fetching {} template…",
+        opts.framework.as_str()
+    ));
+    let remote = crate::templates::fetch_framework_files(opts.framework).await?;
+    spin.finish_and_clear();
+    if let Some(files) = remote {
+        if !out.json {
+            out.info(format!(
+                "Using remote {} template from times-aip-templates.",
+                opts.framework.as_str()
+            ));
+        }
+        let mut out_files = Vec::with_capacity(files.len());
+        for (rel, content) in files {
+            out_files.push((
+                rel,
+                crate::templates::apply_placeholders(&content, &opts.slug, &opts.name),
+            ));
+        }
+        // Remote templates may omit i18n/kind specifics; overlay generated manifest + catalogs.
+        let generated = scaffold(opts);
+        let mut map: std::collections::BTreeMap<String, String> = out_files.into_iter().collect();
+        for (rel, content) in generated {
+            if rel == MANIFEST_FILE
+                || rel.starts_with("i18n/")
+                || rel == "icon.svg"
+                || rel == "icon-dark.svg"
+                || rel == ".gitignore"
+            {
+                map.insert(rel, content);
+            } else {
+                map.entry(rel).or_insert(content);
+            }
+        }
+        return Ok(map.into_iter().collect());
+    }
+    if !out.json {
+        out.info("Using built-in template (remote templates unavailable).");
+    }
+    Ok(scaffold(opts))
+}
 
 pub fn scaffold(o: &Options) -> Vec<(String, String)> {
     let mut files = vec![

@@ -289,8 +289,8 @@ pub enum AipCmd {
         /// Git ref for --remote (branch, tag, or commit). Defaults to main
         #[arg(long, default_value = "main")]
         r#ref: String,
-        /// Poll the job until it finishes
-        #[arg(long)]
+        /// Do not poll the job (print the job id and exit)
+        #[arg(long = "no-follow", action = clap::ArgAction::SetFalse, default_value_t = true)]
         follow: bool,
         /// After a successful deploy, submit the staged version for review
         #[arg(long)]
@@ -301,8 +301,8 @@ pub enum AipCmd {
         /// Upload source and run an authoritative depot scan_only job
         #[arg(long)]
         remote: bool,
-        /// Poll the depot job until it finishes (implies --remote)
-        #[arg(long)]
+        /// Poll the depot job until it finishes (implies --remote). Default on for --remote
+        #[arg(long = "no-follow", action = clap::ArgAction::SetFalse, default_value_t = true)]
         follow: bool,
     },
     /// Retry a failed, cancelled, or timed-out depot job
@@ -310,7 +310,7 @@ pub enum AipCmd {
         /// Depot job ID
         id: String,
         /// Poll until the new job finishes
-        #[arg(long)]
+        #[arg(long = "no-follow", action = clap::ArgAction::SetFalse, default_value_t = true)]
         follow: bool,
     },
     /// Check auth, manifest, hosting and listing

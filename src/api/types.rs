@@ -306,7 +306,11 @@ pub struct DepotJob {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct DepotJobLog {
     #[serde(default)]
+    pub id: Option<i64>,
+    #[serde(default)]
     pub seq: Option<i64>,
+    #[serde(default)]
+    pub stream: Option<String>,
     #[serde(default)]
     pub level: Option<String>,
     #[serde(default)]

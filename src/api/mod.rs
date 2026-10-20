@@ -24,6 +24,7 @@ impl Client {
         let http = reqwest::Client::builder()
             .user_agent(USER_AGENT)
             .connect_timeout(Duration::from_secs(15))
+            .timeout(Duration::from_secs(120))
             .build()?;
         Ok(Self {
             http,
@@ -54,7 +55,7 @@ impl Client {
         let mut req: RequestBuilder = self
             .http
             .request(method, self.url(path))
-            .timeout(Duration::from_secs(60))
+            .timeout(Duration::from_secs(90))
             .header("Accept", "application/json");
         if let Some(t) = token {
             req = req.bearer_auth(t);

@@ -82,18 +82,24 @@ pub fn strip_status_suffix(code: &str) -> String {
 }
 
 fn fallback_message(status: u16, body: &str) -> String {
+    match status {
+        401 => return "You are not signed in.".into(),
+        403 => return "You do not have access to this.".into(),
+        404 => return "Not found.".into(),
+        429 => return "Too many requests. Wait a moment and try again.".into(),
+        521..=524 => {
+            return "The TIMES API edge could not reach the origin (HTTP {status}). Retry in a moment, or use `times aip deploy --remote` for large projects.".replace("{status}", &status.to_string());
+        }
+        500..=599 => {
+            return format!("The TIMES API had a problem (HTTP {status}). Try again later.");
+        }
+        _ => {}
+    }
     let trimmed = body.trim();
-    if !trimmed.is_empty() && trimmed.len() < 200 {
+    if !trimmed.is_empty() && trimmed.len() < 200 && !trimmed.to_ascii_lowercase().contains("error code") {
         return format!("Request failed with HTTP {status}: {trimmed}");
     }
-    match status {
-        401 => "You are not signed in.".into(),
-        403 => "You do not have access to this.".into(),
-        404 => "Not found.".into(),
-        429 => "Too many requests. Wait a moment and try again.".into(),
-        500..=599 => format!("The TIMES API had a problem (HTTP {status}). Try again later."),
-        _ => format!("Request failed with HTTP {status}."),
-    }
+    format!("Request failed with HTTP {status}.")
 }
 
 #[cfg(test)]

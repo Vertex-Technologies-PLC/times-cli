@@ -118,6 +118,37 @@ impl Output {
         pb
     }
 
+    pub fn step(&self, n: usize, total: usize, msg: impl AsRef<str>) {
+        if self.json {
+            return;
+        }
+        eprintln!(
+            "{} {}",
+            style(format!("[{n}/{total}]")).cyan().bold(),
+            msg.as_ref()
+        );
+    }
+
+    pub fn log_line(&self, stream: Option<&str>, text: &str) {
+        if self.json || text.is_empty() {
+            return;
+        }
+        match stream {
+            Some("stderr") => eprintln!("{} {}", style("│").red(), text),
+            Some("stdout") => eprintln!("{} {}", style("│").dim(), text),
+            Some("system") => eprintln!("{} {}", style("▸").cyan().bold(), text),
+            _ => eprintln!("{} {}", style("│").dim(), text),
+        }
+    }
+
+    pub fn status_line(&self, status: &str) {
+        if self.json {
+            return;
+        }
+        let label = status.replace('_', " ");
+        eprintln!("{} {}", style("●").cyan(), style(label).bold());
+    }
+
     pub fn table(&self, headers: &[&str], rows: Vec<Vec<String>>) {
         if self.json {
             return;

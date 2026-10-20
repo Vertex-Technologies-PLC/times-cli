@@ -36,7 +36,7 @@ pub async fn run(ctx: &mut Ctx, cmd: AipCmd) -> anyhow::Result<()> {
         AipCmd::Status { slug, version } => status(ctx, slug, version).await,
         AipCmd::Withdraw { version, slug } => withdraw(ctx, slug, version).await,
         AipCmd::Logs { slug, version } => logs(ctx, slug, version).await,
-        AipCmd::Scan { remote, follow } => scan_only(ctx, remote || follow, follow).await,
+        AipCmd::Scan { remote, follow } => scan_only(ctx, remote, follow).await,
         AipCmd::Retry { id, follow } => retry_job(ctx, id, follow).await,
         AipCmd::Doctor => doctor(ctx).await,
         AipCmd::Delete { slug } => delete_aip(ctx, slug).await,
@@ -266,7 +266,12 @@ async fn deploy(
         } else {
             std::env::current_dir()?.join(dir)
         };
+        if !ctx.out.json {
+            ctx.out.step(1, 4, format!("Packing source for {slug}"));
+        }
+        let pack_spin = ctx.out.spinner("Packing source…");
         let packed = bundle::pack_source(&root)?;
+        pack_spin.finish_and_clear();
         let size = packed.bytes.len() as u64;
         if size > MAX_BUNDLE_BYTES {
             return Err(CliError::validation(format!(
@@ -277,23 +282,34 @@ async fn deploy(
         }
         if !ctx.out.json {
             ctx.out.info(format!(
-                "Packed {} source files ({}) for {slug}.",
+                "  {} files · {}",
                 packed.files.len(),
                 human_size(size)
             ));
+            if size > 8 * 1024 * 1024 {
+                ctx.out.warn(
+                    "Large upload. Prefer `times aip deploy --remote <github-url>` for repos over ~8 MB.",
+                );
+            }
+            ctx.out.step(2, 4, "Requesting upload URL");
         }
-        let ticket: SourceUploadTicket = ctx
-            .client
-            .post(
-                "/api/v1/depot/source-upload-url",
-                Some(&token),
-                &json!({
-                    "sha256": packed.sha256,
-                    "content_type": bundle::CONTENT_TYPE,
-                }),
-            )
-            .await?;
+        let ticket: SourceUploadTicket = post_with_retry(
+            ctx,
+            "/api/v1/depot/source-upload-url",
+            &token,
+            &json!({
+                "sha256": packed.sha256,
+                "content_type": bundle::CONTENT_TYPE,
+            }),
+        )
+        .await?;
+        if !ctx.out.json {
+            ctx.out.step(3, 4, "Uploading source");
+        }
         upload_bytes(ctx, &ticket.upload_url, packed.bytes, bundle::CONTENT_TYPE).await?;
+        if !ctx.out.json {
+            ctx.out.step(4, 4, "Queuing depot job");
+        }
         let body = json!({
             "slug": slug,
             "kind": "build_and_stage",
@@ -301,12 +317,9 @@ async fn deploy(
             "source_blob_sha": packed.sha256,
             "version": version,
         });
-        let job: DepotJob = ctx
-            .client
-            .post("/api/v1/depot/jobs", Some(&token), &body)
-            .await?;
+        let job: DepotJob = post_with_retry(ctx, "/api/v1/depot/jobs", &token, &body).await?;
         if !ctx.out.json {
-            ctx.out.info(format!("Queued local deploy job {}.", job.id));
+            ctx.out.success(format!("Queued deploy job {}", job.id));
         }
         job
     };
@@ -367,8 +380,33 @@ fn print_deploy_result(ctx: &Ctx, job: &DepotJob) {
     }
 }
 
+fn job_status_label(status: &str) -> &'static str {
+    match status {
+        "queued" => "Queued",
+        "claimed" => "Claimed",
+        "cloning" => "Fetching source",
+        "scanning_source" => "Scanning source",
+        "building" => "Building",
+        "packing" => "Packing",
+        "scanning_bundle" => "Scanning bundle",
+        "staging" => "Staging",
+        "finalizing" => "Finalizing",
+        "succeeded" => "Succeeded",
+        "failed" => "Failed",
+        "cancelled" => "Cancelled",
+        "timed_out" => "Timed out",
+        _ => "Working",
+    }
+}
+
 async fn follow_job(ctx: &mut Ctx, token: &str, mut job: DepotJob) -> anyhow::Result<DepotJob> {
     let mut after: i64 = 0;
+    let mut last_status = String::new();
+    let spinner = ctx.out.spinner(format!(
+        "{} · {}",
+        job.slug,
+        job_status_label(&job.status)
+    ));
     loop {
         if !ctx.out.json {
             if let Ok(logs) = ctx
@@ -380,33 +418,95 @@ async fn follow_job(ctx: &mut Ctx, token: &str, mut job: DepotJob) -> anyhow::Re
                 )
                 .await
             {
-                for line in &logs {
-                    let text = line
-                        .message
-                        .as_deref()
-                        .or(line.line.as_deref())
-                        .unwrap_or("");
-                    if !text.is_empty() {
-                        ctx.out.info(text);
-                    }
-                    if let Some(seq) = line.seq {
-                        after = after.max(seq);
-                    }
+                if !logs.is_empty() {
+                    spinner.suspend(|| {
+                        for line in &logs {
+                            let text = line
+                                .message
+                                .as_deref()
+                                .or(line.line.as_deref())
+                                .unwrap_or("");
+                            ctx.out.log_line(line.stream.as_deref(), text);
+                            if let Some(id) = line.id.or(line.seq) {
+                                after = after.max(id);
+                            }
+                        }
+                    });
                 }
             }
         }
         if DEPOT_TERMINAL.contains(&job.status.as_str()) {
+            spinner.finish_and_clear();
+            if !ctx.out.json {
+                ctx.out.status_line(&job.status);
+            }
             return Ok(job);
         }
-        tokio::time::sleep(Duration::from_secs(2)).await;
-        job = ctx
+        if job.status != last_status {
+            last_status = job.status.clone();
+            spinner.set_message(format!(
+                "{} · {}",
+                job.slug,
+                job_status_label(&job.status)
+            ));
+            if !ctx.out.json {
+                spinner.suspend(|| ctx.out.status_line(&job.status));
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(1500)).await;
+        match ctx
             .client
-            .get(
+            .get::<DepotJob>(
                 &format!("/api/v1/depot/jobs/{}", seg(&job.id)),
                 Some(token),
                 &[],
             )
-            .await?;
+            .await
+        {
+            Ok(next) => job = next,
+            Err(err) if is_retryable_edge(&err) => {
+                spinner.set_message(format!("{} · reconnecting…", job.slug));
+                continue;
+            }
+            Err(err) => {
+                spinner.finish_and_clear();
+                return Err(err);
+            }
+        }
+    }
+}
+
+fn is_retryable_edge(err: &anyhow::Error) -> bool {
+    err.downcast_ref::<CliError>()
+        .map(|e| match e {
+            CliError::Api { status, .. } => (521..=524).contains(status) || *status == 429,
+            CliError::Network(_) => true,
+            _ => false,
+        })
+        .unwrap_or(false)
+}
+
+async fn post_with_retry<T: serde::de::DeserializeOwned, B: serde::Serialize>(
+    ctx: &Ctx,
+    path: &str,
+    token: &str,
+    body: &B,
+) -> anyhow::Result<T> {
+    let mut attempt = 0u32;
+    loop {
+        attempt += 1;
+        match ctx.client.post(path, Some(token), body).await {
+            Ok(v) => return Ok(v),
+            Err(err) if is_retryable_edge(&err) && attempt < 4 => {
+                if !ctx.out.json {
+                    ctx.out.warn(format!(
+                        "Transient API error (attempt {attempt}/3). Retrying…"
+                    ));
+                }
+                tokio::time::sleep(Duration::from_secs(2u64.pow(attempt))).await;
+            }
+            Err(err) => return Err(err),
+        }
     }
 }
 
@@ -417,35 +517,70 @@ async fn upload_bytes(
     content_type: &str,
 ) -> anyhow::Result<()> {
     let total = bytes.len() as u64;
-    let bar = ctx.out.bytes_bar(total, "Uploading");
-    let progress = bar.clone();
-    let chunks: Vec<Vec<u8>> = bytes.chunks(CHUNK).map(<[u8]>::to_vec).collect();
-    let body = stream::iter(chunks.into_iter().map(move |c| {
-        progress.inc(c.len() as u64);
-        Ok::<_, std::io::Error>(c)
-    }));
-    let resp = ctx
-        .client
-        .http()
-        .put(upload_url)
-        .header("Content-Type", content_type)
-        .header("Content-Length", total)
-        .body(reqwest::Body::wrap_stream(body))
-        .send()
-        .await
-        .map_err(network_error)?;
-    bar.finish_and_clear();
-    let status = resp.status();
-    if !status.is_success() {
-        return Err(CliError::Api {
-            status: status.as_u16(),
-            code: "SOURCE_UPLOAD_FAILED".into(),
-            message: format!("The source upload failed with HTTP {}.", status.as_u16()),
-            details: None,
+    let mut attempt = 0u32;
+    loop {
+        attempt += 1;
+        let bar = ctx.out.bytes_bar(total, "Uploading");
+        let progress = bar.clone();
+        let chunks: Vec<Vec<u8>> = bytes.chunks(CHUNK).map(<[u8]>::to_vec).collect();
+        let body = stream::iter(chunks.into_iter().map(move |c| {
+            progress.inc(c.len() as u64);
+            Ok::<_, std::io::Error>(c)
+        }));
+        let result = ctx
+            .client
+            .http()
+            .put(upload_url)
+            .timeout(Duration::from_secs(600))
+            .header("Content-Type", content_type)
+            .header("Content-Length", total)
+            .body(reqwest::Body::wrap_stream(body))
+            .send()
+            .await;
+        bar.finish_and_clear();
+        match result {
+            Ok(resp) => {
+                let status = resp.status().as_u16();
+                if (200..300).contains(&status) {
+                    if !ctx.out.json {
+                        ctx.out.success(format!("Uploaded {}", human_size(total)));
+                    }
+                    return Ok(());
+                }
+                if (521..=524).contains(&status) && attempt < 4 {
+                    if !ctx.out.json {
+                        ctx.out.warn(format!(
+                            "Upload hit HTTP {status} (attempt {attempt}/3). Retrying…"
+                        ));
+                    }
+                    tokio::time::sleep(Duration::from_secs(2u64.pow(attempt))).await;
+                    continue;
+                }
+                return Err(CliError::Api {
+                    status,
+                    code: "SOURCE_UPLOAD_FAILED".into(),
+                    message: if (521..=524).contains(&status) {
+                        format!(
+                            "Source upload failed with HTTP {status}. The storage edge could not reach MinIO. Check MINIO_PUBLIC_ENDPOINT on depot, or deploy with --remote."
+                        )
+                    } else {
+                        format!("The source upload failed with HTTP {status}.")
+                    },
+                    details: None,
+                }
+                .into());
+            }
+            Err(e) if attempt < 4 => {
+                if !ctx.out.json {
+                    ctx.out.warn(format!(
+                        "Upload network error (attempt {attempt}/3): {e}. Retrying…"
+                    ));
+                }
+                tokio::time::sleep(Duration::from_secs(2u64.pow(attempt))).await;
+            }
+            Err(e) => return Err(network_error(e)),
         }
-        .into());
     }
-    Ok(())
 }
 
 fn changelog_text(m: &Value, root: &Path, version: &str) -> Option<String> {
@@ -612,7 +747,13 @@ async fn scan_only(ctx: &mut Ctx, remote: bool, follow: bool) -> anyhow::Result<
     if remote {
         return scan_remote(ctx, &loaded, follow).await;
     }
+    if !ctx.out.json {
+        ctx.out.step(1, 3, "Resolving hosting and entry");
+    }
     let hosting = hosting::resolve(&loaded.value)?;
+    if !ctx.out.json {
+        ctx.out.step(2, 3, "Collecting files to scan");
+    }
     let packed = if hosting.needs_bundle(&loaded.value)
         && !hosting::output_dir_missing(&loaded.root, &loaded.value)
     {
@@ -624,7 +765,19 @@ async fn scan_only(ctx: &mut Ctx, remote: bool, follow: bool) -> anyhow::Result<
         .as_ref()
         .map(|files| files.iter().map(|(n, p)| (n.clone(), p.clone())).collect())
         .unwrap_or_default();
+    if !ctx.out.json {
+        ctx.out.step(
+            3,
+            3,
+            format!(
+                "Running fail-closed scan ({} packed files)",
+                packed_list.len()
+            ),
+        );
+    }
+    let spin = ctx.out.spinner("Scanning…");
     let findings = crate::scan::run(&loaded.root, &packed_list, &hosting);
+    spin.finish_and_clear();
     if ctx.out.json {
         return ctx.out.json(&json!({
             "passed": findings.is_empty(),
@@ -644,6 +797,9 @@ async fn scan_remote(ctx: &mut Ctx, loaded: &Loaded, follow: bool) -> anyhow::Re
         .to_string();
     let version = str_at(m, "/version").map(str::to_string);
     let token = ctx.erp_token().await?;
+    if !ctx.out.json {
+        ctx.out.step(1, 3, format!("Packing source for {slug}"));
+    }
     let packed = bundle::pack_source(&loaded.root)?;
     let size = packed.bytes.len() as u64;
     if size > MAX_BUNDLE_BYTES {
@@ -653,18 +809,28 @@ async fn scan_remote(ctx: &mut Ctx, loaded: &Loaded, follow: bool) -> anyhow::Re
             human_size(MAX_BUNDLE_BYTES)
         )));
     }
-    let ticket: SourceUploadTicket = ctx
-        .client
-        .post(
-            "/api/v1/depot/source-upload-url",
-            Some(&token),
-            &json!({
-                "sha256": packed.sha256,
-                "content_type": bundle::CONTENT_TYPE,
-            }),
-        )
-        .await?;
+    if !ctx.out.json {
+        ctx.out.info(format!(
+            "  {} files · {}",
+            packed.files.len(),
+            human_size(size)
+        ));
+        ctx.out.step(2, 3, "Uploading source");
+    }
+    let ticket: SourceUploadTicket = post_with_retry(
+        ctx,
+        "/api/v1/depot/source-upload-url",
+        &token,
+        &json!({
+            "sha256": packed.sha256,
+            "content_type": bundle::CONTENT_TYPE,
+        }),
+    )
+    .await?;
     upload_bytes(ctx, &ticket.upload_url, packed.bytes, bundle::CONTENT_TYPE).await?;
+    if !ctx.out.json {
+        ctx.out.step(3, 3, "Queuing depot scan");
+    }
     let body = json!({
         "slug": slug,
         "kind": "scan_only",
@@ -672,12 +838,9 @@ async fn scan_remote(ctx: &mut Ctx, loaded: &Loaded, follow: bool) -> anyhow::Re
         "source_blob_sha": packed.sha256,
         "version": version,
     });
-    let job: DepotJob = ctx
-        .client
-        .post("/api/v1/depot/jobs", Some(&token), &body)
-        .await?;
+    let job: DepotJob = post_with_retry(ctx, "/api/v1/depot/jobs", &token, &body).await?;
     if !ctx.out.json {
-        ctx.out.info(format!("Queued depot scan job {}.", job.id));
+        ctx.out.success(format!("Queued scan job {}", job.id));
     }
     let job = if follow {
         follow_job(ctx, &token, job).await?
