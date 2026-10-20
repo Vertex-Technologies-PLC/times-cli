@@ -281,6 +281,54 @@ pub struct UploadTicket {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct SourceUploadTicket {
+    pub upload_url: String,
+    #[serde(default)]
+    pub storage_key: Option<String>,
+    #[serde(default)]
+    pub sha256: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct DepotJob {
+    pub id: String,
+    pub slug: String,
+    #[serde(default)]
+    pub kind: Option<String>,
+    pub status: String,
+    #[serde(default)]
+    pub trigger_kind: Option<String>,
+    #[serde(default)]
+    pub github_repo: Option<String>,
+    #[serde(default)]
+    pub git_ref: Option<String>,
+    #[serde(default)]
+    pub git_commit_sha: Option<String>,
+    #[serde(default)]
+    pub source_blob_sha: Option<String>,
+    #[serde(default)]
+    pub version: Option<String>,
+    #[serde(default)]
+    pub error_code: Option<String>,
+    #[serde(default)]
+    pub error_message: Option<String>,
+    #[serde(default)]
+    pub attempt: Option<i32>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct DepotJobLog {
+    #[serde(default)]
+    pub seq: Option<i64>,
+    #[serde(default)]
+    pub level: Option<String>,
+    #[serde(default)]
+    pub message: Option<String>,
+    #[serde(default)]
+    pub line: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StatsDay {
     pub day: String,

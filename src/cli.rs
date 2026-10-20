@@ -296,6 +296,24 @@ pub enum AipCmd {
         #[arg(long)]
         skip_probe: bool,
     },
+    /// Build and stage via TIMES depot (local zip or remote GitHub)
+    Deploy {
+        /// Project folder to zip for a local deploy. Defaults to the current folder
+        #[arg(long, default_value = ".")]
+        dir: PathBuf,
+        /// GitHub repository URL. Enqueues a remote clone job instead of uploading a zip
+        #[arg(long, value_name = "URL")]
+        remote: Option<String>,
+        /// Git ref for --remote (branch, tag, or commit). Defaults to main
+        #[arg(long, default_value = "main")]
+        r#ref: String,
+        /// Poll the job until it finishes
+        #[arg(long)]
+        follow: bool,
+        /// After a successful deploy, submit the staged version for review
+        #[arg(long)]
+        submit: bool,
+    },
     /// Scan the project without uploading
     Scan,
     /// Check auth, manifest, hosting and listing

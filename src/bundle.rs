@@ -121,6 +121,16 @@ pub fn pack(root: &Path, manifest: &Value, dir: Option<&str>) -> anyhow::Result<
     zip_files(collect(root, manifest, dir)?)
 }
 
+pub fn pack_source(root: &Path) -> anyhow::Result<Bundle> {
+    let root = root.canonicalize()?;
+    let mut files = BTreeMap::new();
+    add_dir(&root, &root, &mut files)?;
+    if files.is_empty() {
+        return Err(CliError::usage("Nothing to zip in this folder.").into());
+    }
+    zip_files(files)
+}
+
 pub fn zip_files(files: BTreeMap<String, PathBuf>) -> anyhow::Result<Bundle> {
     let mut buf = Cursor::new(Vec::new());
     {

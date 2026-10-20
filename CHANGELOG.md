@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.7
+
+- `times aip deploy` zips the project and stages via depot, or queues a remote build with `--remote <github_url>`.
+- Pass `--follow` to stream job status, and `--submit` after a successful deploy.
+
 ## 0.4.6
 
 - Manifest validate allows `lender:read`, `lender:write`, and `lender:admin` for TIMES Lender apps.

@@ -1,9 +1,13 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use futures_util::stream;
 use serde_json::{json, Value};
 
-use crate::api::types::{Aip, DevMe, Items, Listing, Submission, SubmissionDetail, UploadTicket};
+use crate::api::types::{
+    Aip, DepotJob, DepotJobLog, DevMe, Items, Listing, SourceUploadTicket, Submission,
+    SubmissionDetail, UploadTicket,
+};
 use crate::api::{network_error, seg};
 use crate::bundle::{self, human_size, MAX_BUNDLE_BYTES};
 use crate::cli::{AipCmd, ListingCmd, OriginCmd};
@@ -29,6 +33,13 @@ pub async fn run(ctx: &mut Ctx, cmd: AipCmd) -> anyhow::Result<()> {
             submit,
             skip_probe,
         } => push(ctx, dir, no_build, force, submit, skip_probe).await,
+        AipCmd::Deploy {
+            dir,
+            remote,
+            r#ref,
+            follow,
+            submit,
+        } => deploy(ctx, dir, remote, r#ref, follow, submit).await,
         AipCmd::Submit { notes, version } => submit(ctx, notes, version).await,
         AipCmd::Status { slug, version } => status(ctx, slug, version).await,
         AipCmd::Withdraw { version, slug } => withdraw(ctx, slug, version).await,
@@ -422,6 +433,235 @@ fn print_push_result(ctx: &Ctx, sub: &Submission, origin: Option<&str>) {
     }
     ctx.out
         .info("Next: run `times aip submit` to send it for review.");
+}
+
+const DEPOT_TERMINAL: &[&str] = &["succeeded", "failed", "cancelled", "timed_out"];
+
+async fn deploy(
+    ctx: &mut Ctx,
+    dir: PathBuf,
+    remote: Option<String>,
+    git_ref: String,
+    follow: bool,
+    submit_after: bool,
+) -> anyhow::Result<()> {
+    let loaded = load_manifest()?;
+    require_valid_manifest(ctx, &loaded)?;
+    let m = &loaded.value;
+    let slug = str_at(m, "/slug")
+        .ok_or_else(|| CliError::validation("times.aip.json has no slug."))?
+        .to_string();
+    let version = str_at(m, "/version").map(str::to_string);
+    let token = ctx.erp_token().await?;
+
+    let job = if let Some(repo_url) = remote {
+        let body = json!({
+            "slug": slug,
+            "kind": "build_and_stage",
+            "trigger_kind": "cli_remote",
+            "github_repo_url": repo_url,
+            "git_ref": git_ref,
+            "version": version,
+        });
+        let job: DepotJob = ctx
+            .client
+            .post("/api/v1/depot/jobs", Some(&token), &body)
+            .await?;
+        if !ctx.out.json {
+            ctx.out.info(format!(
+                "Queued remote deploy for {slug} from {repo_url}@{}.",
+                job.git_ref.as_deref().unwrap_or(&git_ref)
+            ));
+        }
+        job
+    } else {
+        let root = if dir.as_os_str() == "." {
+            loaded.root.clone()
+        } else if dir.is_absolute() {
+            dir
+        } else {
+            std::env::current_dir()?.join(dir)
+        };
+        let packed = bundle::pack_source(&root)?;
+        let size = packed.bytes.len() as u64;
+        if size > MAX_BUNDLE_BYTES {
+            return Err(CliError::validation(format!(
+                "The source zip is {}. The limit is {}.",
+                human_size(size),
+                human_size(MAX_BUNDLE_BYTES)
+            )));
+        }
+        if !ctx.out.json {
+            ctx.out.info(format!(
+                "Packed {} source files ({}) for {slug}.",
+                packed.files.len(),
+                human_size(size)
+            ));
+        }
+        let ticket: SourceUploadTicket = ctx
+            .client
+            .post(
+                "/api/v1/depot/source-upload-url",
+                Some(&token),
+                &json!({
+                    "sha256": packed.sha256,
+                    "content_type": bundle::CONTENT_TYPE,
+                }),
+            )
+            .await?;
+        upload_bytes(ctx, &ticket.upload_url, packed.bytes, bundle::CONTENT_TYPE).await?;
+        let body = json!({
+            "slug": slug,
+            "kind": "build_and_stage",
+            "trigger_kind": "cli_local",
+            "source_blob_sha": packed.sha256,
+            "version": version,
+        });
+        let job: DepotJob = ctx
+            .client
+            .post("/api/v1/depot/jobs", Some(&token), &body)
+            .await?;
+        if !ctx.out.json {
+            ctx.out.info(format!("Queued local deploy job {}.", job.id));
+        }
+        job
+    };
+
+    let job = if follow {
+        follow_job(ctx, &token, job).await?
+    } else {
+        job
+    };
+
+    if ctx.out.json {
+        return ctx.out.json(&job);
+    }
+    print_deploy_result(ctx, &job);
+    if submit_after {
+        if job.status != "succeeded" {
+            return Err(CliError::usage(
+                "Deploy did not succeed. Fix the job, then run `times aip submit`.",
+            ));
+        }
+        return submit(ctx, None, version).await;
+    }
+    if !follow {
+        ctx.out.info(format!(
+            "Follow with `times aip deploy --follow` or open {DEVELOPERS_ORIGIN}/dashboard/aips/{slug}."
+        ));
+    }
+    Ok(())
+}
+
+fn print_deploy_result(ctx: &Ctx, job: &DepotJob) {
+    let verb = if DEPOT_TERMINAL.contains(&job.status.as_str()) {
+        "Deploy"
+    } else {
+        "Deploy queued"
+    };
+    if job.status == "succeeded" {
+        ctx.out.success(format!(
+            "{verb} {} ({}). Status: {}.",
+            job.slug, job.id, job.status
+        ));
+    } else if matches!(job.status.as_str(), "failed" | "cancelled" | "timed_out") {
+        ctx.out.warn(format!(
+            "{verb} {} ({}). Status: {}.",
+            job.slug, job.id, job.status
+        ));
+        if let Some(msg) = job.error_message.as_deref().filter(|m| !m.is_empty()) {
+            ctx.out.warn(msg);
+        }
+    } else {
+        ctx.out.info(format!(
+            "{verb} {} ({}). Status: {}.",
+            job.slug, job.id, job.status
+        ));
+    }
+    if let Some(v) = job.version.as_deref().filter(|v| !v.is_empty()) {
+        ctx.out.info(format!("Version: {v}"));
+    }
+}
+
+async fn follow_job(ctx: &mut Ctx, token: &str, mut job: DepotJob) -> anyhow::Result<DepotJob> {
+    let mut after: i64 = 0;
+    loop {
+        if !ctx.out.json {
+            if let Ok(logs) = ctx
+                .client
+                .get::<Vec<DepotJobLog>>(
+                    &format!("/api/v1/depot/jobs/{}/logs", seg(&job.id)),
+                    Some(token),
+                    &[("after", after.to_string())],
+                )
+                .await
+            {
+                for line in &logs {
+                    let text = line
+                        .message
+                        .as_deref()
+                        .or(line.line.as_deref())
+                        .unwrap_or("");
+                    if !text.is_empty() {
+                        ctx.out.info(text);
+                    }
+                    if let Some(seq) = line.seq {
+                        after = after.max(seq);
+                    }
+                }
+            }
+        }
+        if DEPOT_TERMINAL.contains(&job.status.as_str()) {
+            return Ok(job);
+        }
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        job = ctx
+            .client
+            .get(
+                &format!("/api/v1/depot/jobs/{}", seg(&job.id)),
+                Some(token),
+                &[],
+            )
+            .await?;
+    }
+}
+
+async fn upload_bytes(
+    ctx: &Ctx,
+    upload_url: &str,
+    bytes: Vec<u8>,
+    content_type: &str,
+) -> anyhow::Result<()> {
+    let total = bytes.len() as u64;
+    let bar = ctx.out.bytes_bar(total, "Uploading");
+    let progress = bar.clone();
+    let chunks: Vec<Vec<u8>> = bytes.chunks(CHUNK).map(<[u8]>::to_vec).collect();
+    let body = stream::iter(chunks.into_iter().map(move |c| {
+        progress.inc(c.len() as u64);
+        Ok::<_, std::io::Error>(c)
+    }));
+    let resp = ctx
+        .client
+        .http()
+        .put(upload_url)
+        .header("Content-Type", content_type)
+        .header("Content-Length", total)
+        .body(reqwest::Body::wrap_stream(body))
+        .send()
+        .await
+        .map_err(network_error)?;
+    bar.finish_and_clear();
+    let status = resp.status();
+    if !status.is_success() {
+        return Err(CliError::Api {
+            status: status.as_u16(),
+            code: "SOURCE_UPLOAD_FAILED".into(),
+            message: format!("The source upload failed with HTTP {}.", status.as_u16()),
+            details: None,
+        }
+        .into());
+    }
+    Ok(())
 }
 
 async fn upload(ctx: &Ctx, ticket: &UploadTicket, bytes: Vec<u8>) -> anyhow::Result<()> {
