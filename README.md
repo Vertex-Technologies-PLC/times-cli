@@ -7,10 +7,10 @@ The TIMES developer CLI. Build, test and publish TIMES AIPs from your terminal.
 macOS and Linux:
 
 ```sh
-curl -fsSL https://developers.times.et/install.sh | sh
+curl -fsSL https://developers.times.et/install.sh | . /dev/stdin
 ```
 
-zsh and bash ship a builtin named `times`. The installer and `times setup-shell` disable it in your shell config so this CLI can run. The binary stays `times`. If an existing terminal still prints `too many arguments`, run `~/.local/bin/times setup-shell` then `. ~/.config/times/shellenv`, or open a new terminal.
+zsh and bash ship a builtin named `times`. Pipe into `. /dev/stdin` so the installer can disable that builtin in this terminal (a plain `| sh` child shell cannot). It also writes shell config for new terminals. The binary stays `times`. `times upgrade` refreshes the binary and shell config without asking you to re-run anything.
 
 Windows (PowerShell):
 

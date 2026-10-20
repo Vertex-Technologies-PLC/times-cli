@@ -33,30 +33,28 @@ pub async fn run(out: &Output) -> anyhow::Result<()> {
     }
 
     run_installer()?;
-    let shell_applied = apply_shell_after_upgrade();
+    let _ = ensure_shell_after_upgrade();
 
     if out.json {
         return out.json(&json!({
             "current": current.to_string(),
             "latest": latest.map(|v| v.to_string()),
             "upgraded": true,
-            "shellConfigured": shell_applied,
             "changelog": CHANGELOG_URL,
         }));
     }
-    out.success("Installer finished.");
-    if shell_applied {
-        out.info(
-            "Shell config updated so the TIMES CLI wins over the POSIX times builtin.",
-        );
-        out.info("Open a new terminal, or run: . ~/.config/times/shellenv");
-    }
-    out.info("Run `times --version` to confirm. Changelog:");
-    out.info(format!("  {CHANGELOG_URL}"));
+    out.success(format!(
+        "Upgraded to times {}.",
+        latest
+            .as_ref()
+            .map(|v| v.to_string())
+            .unwrap_or_else(|| "latest".into())
+    ));
+    out.info(format!("Changelog: {CHANGELOG_URL}"));
     Ok(())
 }
 
-fn apply_shell_after_upgrade() -> bool {
+fn ensure_shell_after_upgrade() -> bool {
     if cfg!(windows) {
         return false;
     }
@@ -81,6 +79,7 @@ fn run_installer() -> anyhow::Result<()> {
         Command::new("sh")
             .arg("-c")
             .arg(&script)
+            .env("TIMES_INSTALL_QUIET", "1")
             .status()
             .context("Could not start sh to run the times installer")?
     };

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.12
+
+- `times upgrade` installs quietly and no longer asks you to source shellenv or open a new terminal. Shell config is still written automatically.
+- Fresh install one-liner: `curl … | . /dev/stdin`. The script applies shellenv in that shell (PATH + builtin disable).
+
 ## 0.4.11
 
 - `times aip deploy --bump <major|minor|patch>` bumps `times.aip.json` (and `package.json` when present) before packing and staging. Same as `times manifest bump`, then deploy.
