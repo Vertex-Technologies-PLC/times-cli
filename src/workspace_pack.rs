@@ -189,7 +189,7 @@ fn regenerate_npm_lockfile(staged: &Path) -> anyhow::Result<()> {
 
 fn resolve_workspace_package(project_root: &Path, name: &str) -> anyhow::Result<PathBuf> {
     if let Ok(explicit) = env::var("TIMES_AIP_SDK_PATH") {
-        if name == "@times/aip-sdk" {
+        if name == "@times-aip/aip-sdk" {
             let p = PathBuf::from(explicit);
             if package_name_matches(&p, name)? {
                 return Ok(p.canonicalize()?);
@@ -202,7 +202,7 @@ fn resolve_workspace_package(project_root: &Path, name: &str) -> anyhow::Result<
         return Ok(linked.canonicalize()?);
     }
 
-    if name == "@times/aip-sdk" {
+    if name == "@times-aip/aip-sdk" {
         for parent in project_root.ancestors() {
             let cand = parent.join("times-aip-sdk");
             if package_name_matches(&cand, name)? {
@@ -213,7 +213,7 @@ fn resolve_workspace_package(project_root: &Path, name: &str) -> anyhow::Result<
 
     Err(CliError::usage(format!(
         "workspace dependency {name} could not be resolved for packing. \
-Install it locally (node_modules), set TIMES_AIP_SDK_PATH for @times/aip-sdk, \
+Install it locally (node_modules), set TIMES_AIP_SDK_PATH for @times-aip/aip-sdk, \
 or change package.json to a published version such as \"{name}\": \"^1.0.0\"."
     ))
     .into())
@@ -407,7 +407,7 @@ mod tests {
         let root = dir.path();
         fs::write(
             root.join("package.json"),
-            r#"{"name":"demo","dependencies":{"@times/aip-sdk":"workspace:*","left-pad":"1.3.0"}}"#,
+            r#"{"name":"demo","dependencies":{"@times-aip/aip-sdk":"workspace:*","left-pad":"1.3.0"}}"#,
         )
         .unwrap();
         // Stale workspace-era locks must not win over the regenerated npm lock.
@@ -420,11 +420,11 @@ mod tests {
         env::set_var("TIMES_AIP_SDK_PATH", &sdk);
         let staged = stage_for_deploy(root).expect("stage");
         env::remove_var("TIMES_AIP_SDK_PATH");
-        assert!(staged.vendored_packages.contains(&"@times/aip-sdk".to_string()));
+        assert!(staged.vendored_packages.contains(&"@times-aip/aip-sdk".to_string()));
         let pkg: Value =
             serde_json::from_str(&fs::read_to_string(staged.staged_root.join("package.json")).unwrap())
                 .unwrap();
-        let dep = pkg["dependencies"]["@times/aip-sdk"].as_str().unwrap();
+        let dep = pkg["dependencies"]["@times-aip/aip-sdk"].as_str().unwrap();
         assert!(dep.starts_with("file:./vendor/"));
         assert!(staged.staged_root.join("vendor/times-aip-sdk/package.json").is_file());
         assert!(staged.staged_root.join("package-lock.json").is_file());
@@ -471,7 +471,7 @@ mod tests {
         fs::create_dir_all(&sdk).unwrap();
         fs::write(
             sdk.join("package.json"),
-            r#"{"name":"@times/aip-sdk","version":"0.0.0"}"#,
+            r#"{"name":"@times-aip/aip-sdk","version":"0.0.0"}"#,
         )
         .unwrap();
         let err = copy_npm_package(&sdk, &dir.path().join("out")).unwrap_err();

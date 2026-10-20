@@ -420,10 +420,10 @@ const ICON_DARK: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0
 
 const GITIGNORE: &str = "node_modules\ndist\nout\n.next\n*.zip\n.DS_Store\n.times/\n";
 
-const MAIN_TS: &str = r#"import '@times/aip-sdk/tokens.css';
-import '@times/aip-sdk/themes.css';
+const MAIN_TS: &str = r#"import '@times-aip/aip-sdk/tokens.css';
+import '@times-aip/aip-sdk/themes.css';
 import './style.css';
-import { createTimesAipClient } from '@times/aip-sdk';
+import { createTimesAipClient } from '@times-aip/aip-sdk';
 
 const client = createTimesAipClient({
   parentOrigin: 'https://app.times.et',
@@ -631,9 +631,9 @@ export default nextConfig;
 
 const NEXT_LAYOUT: &str = r#"import type { ReactNode } from 'react';
 import Script from 'next/script';
-import '@times/aip-sdk/tokens.css';
-import '@times/aip-sdk/themes.css';
-import '@times/aip-sdk/theme-structure.css';
+import '@times-aip/aip-sdk/tokens.css';
+import '@times-aip/aip-sdk/themes.css';
+import '@times-aip/aip-sdk/theme-structure.css';
 
 const THEME_BOOT_SCRIPT =
   "(function(){try{var p=new URLSearchParams(location.search);var theme=p.get('theme');var mode=p.get('colorMode');var locale=p.get('locale');var root=document.documentElement;if(theme&&/^[a-z0-9-]+$/.test(theme))root.setAttribute('data-theme',theme);if(mode==='dark'){root.classList.add('dark');root.style.colorScheme='dark';}else if(mode==='light'){root.classList.remove('dark');root.style.colorScheme='light';}if(locale&&/^(en|am|om|ti)$/.test(locale))root.lang=locale;}catch(e){}})();";
@@ -655,7 +655,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
 const NEXT_PAGE: &str = r#"'use client';
 
 import { useEffect, useState } from 'react';
-import { createTimesAipClient, type TimesAipClient } from '@times/aip-sdk';
+import { createTimesAipClient, type TimesAipClient } from '@times-aip/aip-sdk';
 
 export default function Home() {
   const [client, setClient] = useState<TimesAipClient | null>(null);
@@ -770,7 +770,7 @@ pub fn scaffold(o: &Options) -> Vec<(String, String)> {
                 "version": "1.0.0",
                 "type": "module",
                 "scripts": { "dev": "vite", "build": "tsc && vite build", "preview": "vite preview" },
-                "dependencies": { "@times/aip-sdk": "^1.0.0" },
+                "dependencies": { "@times-aip/aip-sdk": "^1.0.0" },
                 "devDependencies": { "typescript": "^5.7.0", "vite": "^6.0.0" }
             });
             files.push(("package.json".into(), pretty(&pkg)));
@@ -805,7 +805,7 @@ pub fn scaffold(o: &Options) -> Vec<(String, String)> {
                 "version": "1.0.0",
                 "scripts": { "dev": "next dev", "build": "next build" },
                 "dependencies": {
-                    "@times/aip-sdk": "^1.0.0",
+                    "@times-aip/aip-sdk": "^1.0.0",
                     "next": "^16.0.0",
                     "react": "^19.0.0",
                     "react-dom": "^19.0.0"

@@ -21,7 +21,7 @@
 
 ## 0.4.13
 
-- `times aip deploy` vendors `workspace:` dependencies (for example `@times/aip-sdk`) into `vendor/`, drops stale bun/pnpm locks, and regenerates `package-lock.json` before upload so depot can `npm ci` without a monorepo.
+- `times aip deploy` vendors `workspace:` dependencies (for example `@times-aip/aip-sdk`) into `vendor/`, drops stale bun/pnpm locks, and regenerates `package-lock.json` before upload so depot can `npm ci` without a monorepo.
 - Shellenv always puts the install bin dir first on `PATH`, so `~/.local/bin/times` wins over `~/.cargo/bin/times`.
 - `times upgrade` rewrites shellenv on every upgrade so that PATH fix applies immediately.
 - Static `times init` scaffolds ship palette `themes.css` and sync guest preferences from the runtime API.
@@ -80,7 +80,7 @@
 - `times manifest validate` checks the schema, version, scopes, TIMES tokens, light and dark icons, entry, locales, changelog, catalogs, and palette adoption. Each check prints PASS, WARN, or FAIL while a progress bar fills.
 - Catalogs need `meta.name`. Amharic, Afaan Oromo, and Tigrinya catalogs must not be a copy of English. User-facing catalog strings cannot use an em dash.
 - Apps and integrations need both `ui.icon` and `ui.iconDark`, and those files must differ.
-- When source is present, it must link `themes.css`, follow the host color mode, and import `@times/aip-sdk` unless the app is static.
+- When source is present, it must link `themes.css`, follow the host color mode, and import `@times-aip/aip-sdk` unless the app is static.
 - `times init` scaffolds the dark icon, palette stylesheet, and color mode hook.
 
 ## 0.4.2

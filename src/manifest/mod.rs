@@ -540,7 +540,7 @@ fn theme_adoption_checks(m: &Value, root: &Path, r: &mut Report) {
     if !blob.contains("themes.css") {
         r.error(
             "/ui",
-            "Import @times/aip-sdk/themes.css, or link themes.css, so palette type and structure match TIMES.",
+            "Import @times-aip/aip-sdk/themes.css, or link themes.css, so palette type and structure match TIMES.",
         );
     }
     let boots_palette = blob.contains("times-theme-boot")
@@ -586,10 +586,10 @@ fn theme_adoption_checks(m: &Value, root: &Path, r: &mut Report) {
         );
     }
     let framework = str_at(m, "/ui/framework").unwrap_or("");
-    if framework != "static" && !blob.contains("@times/aip-sdk") {
+    if framework != "static" && !blob.contains("@times-aip/aip-sdk") {
         r.error(
             "/ui",
-            "Import @times/aip-sdk so shared components match TIMES.",
+            "Import @times-aip/aip-sdk so shared components match TIMES.",
         );
     }
     built_css_palette_checks(m, root, r);
@@ -613,7 +613,7 @@ fn built_css_palette_checks(m: &Value, root: &Path, r: &mut Report) {
     if !css_blobs.contains("[data-theme") {
         r.error(
             "/ui",
-            "Built CSS is missing [data-theme] palette rules. Import @times/aip-sdk/themes.css and rebuild so Grove, Ember, and other TIMES palettes ship.",
+            "Built CSS is missing [data-theme] palette rules. Import @times-aip/aip-sdk/themes.css and rebuild so Grove, Ember, and other TIMES palettes ship.",
         );
     }
     let loads_prefs_built = css_blobs.contains("runtime/v1/preferences")
@@ -624,7 +624,7 @@ fn built_css_palette_checks(m: &Value, root: &Path, r: &mut Report) {
     if !loads_prefs_built {
         r.error(
             "/ui",
-            "Built bundle does not fetch user preferences. Use @times/aip-sdk createTimesAipClient (prefs sync) or call /api/v1/apps/runtime/v1/preferences, then rebuild.",
+            "Built bundle does not fetch user preferences. Use @times-aip/aip-sdk createTimesAipClient (prefs sync) or call /api/v1/apps/runtime/v1/preferences, then rebuild.",
         );
     }
     for id in [
