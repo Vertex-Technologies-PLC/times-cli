@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.17
+
+- Manifest UI checks require `@times-aip/aip-sdk`.
+
 ## 0.4.16
 
 - `times upgrade` shows a percentage progress bar only (no installer step spam). Failure dumps the last log lines.
