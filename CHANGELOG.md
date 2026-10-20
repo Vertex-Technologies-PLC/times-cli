@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.16
+
+- `times upgrade` shows a percentage progress bar only (no installer step spam). Failure dumps the last log lines.
+- `times aip deploy` prints packing phases, silences npm lockfile chatter, and follows jobs quietly by default. Use `--verbose` (or `TIMES_DEPLOY_VERBOSE=1`) for full build logs. Failures still show the error and a short stderr tail.
+- Same quiet follow for `times aip scan --remote` and `times aip retry`.
+
 ## 0.4.15
 
 - `times upgrade` prints the changelog link once (after success), not before and after.

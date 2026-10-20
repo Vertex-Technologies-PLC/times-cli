@@ -91,6 +91,21 @@ impl Output {
         pb
     }
 
+    /// Progress bar where `pos` is treated as a percentage (0-100).
+    pub fn percent_bar(&self, msg: impl Into<String>) -> ProgressBar {
+        if !self.interactive {
+            return ProgressBar::hidden();
+        }
+        let pb = ProgressBar::new(100);
+        pb.set_style(
+            ProgressStyle::with_template("{bar:32.cyan/blue} {pos:>3}% {msg}")
+                .unwrap()
+                .progress_chars("█▉▊▋▌▍▎▏░"),
+        );
+        pb.set_message(msg.into());
+        pb
+    }
+
     pub fn spinner(&self, msg: impl Into<String>) -> ProgressBar {
         if !self.interactive {
             return ProgressBar::hidden();

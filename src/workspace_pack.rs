@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 use anyhow::Context;
 use serde_json::{Map, Value};
@@ -17,10 +17,26 @@ pub struct WorkspacePack {
     _keep: tempfile::TempDir,
 }
 
+/// Progress callbacks while staging a deploy pack (human CLI only).
+pub enum PackPhase {
+    Copying,
+    Vendoring(String),
+    RegeneratingLockfile,
+    Zipping,
+}
+
 pub fn stage_for_deploy(project_root: &Path) -> anyhow::Result<WorkspacePack> {
+    stage_for_deploy_with(project_root, |_| {})
+}
+
+pub fn stage_for_deploy_with(
+    project_root: &Path,
+    mut on_phase: impl FnMut(PackPhase),
+) -> anyhow::Result<WorkspacePack> {
     let project_root = project_root.canonicalize()?;
     let keep = tempfile::tempdir().context("Could not create a temp folder for the deploy pack")?;
     let staged = keep.path().join("src");
+    on_phase(PackPhase::Copying);
     copy_tree(&project_root, &staged)?;
 
     let pkg_path = staged.join("package.json");
@@ -52,6 +68,7 @@ pub fn stage_for_deploy(project_root: &Path) -> anyhow::Result<WorkspacePack> {
             .map(|(name, _)| name.clone())
             .collect();
         for name in names {
+            on_phase(PackPhase::Vendoring(name.clone()));
             let source = resolve_workspace_package(&project_root, &name)?;
             let dest_rel = format!("{VENDOR_DIR}/{}", sanitize_pkg_dir(&name));
             let dest = staged.join(&dest_rel);
@@ -65,8 +82,7 @@ pub fn stage_for_deploy(project_root: &Path) -> anyhow::Result<WorkspacePack> {
         let pretty = serde_json::to_string_pretty(&pkg)? + "\n";
         fs::write(&pkg_path, pretty)
             .with_context(|| format!("Could not rewrite {}", pkg_path.display()))?;
-        // Old lockfiles still name workspace: ranges (or bun/pnpm workspace
-        // graphs). Drop them and regenerate an npm lock against file: vendors.
+        on_phase(PackPhase::RegeneratingLockfile);
         regenerate_npm_lockfile(&staged)?;
     } else {
         ensure_lockfile_present(&staged)?;
@@ -131,23 +147,35 @@ fn regenerate_npm_lockfile(staged: &Path) -> anyhow::Result<()> {
                 .with_context(|| format!("Could not remove stale lockfile {}", path.display()))?;
         }
     }
-    let status = Command::new("npm")
+    let output = Command::new("npm")
         .args([
             "install",
             "--package-lock-only",
             "--ignore-scripts",
             "--no-audit",
             "--no-fund",
+            "--loglevel",
+            "error",
         ])
         .current_dir(staged)
-        .status()
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .output()
         .context(
             "Could not run npm to generate package-lock.json. Install Node.js/npm, or commit a lockfile.",
         )?;
-    if !status.success() {
-        return Err(CliError::usage(
-            "npm could not generate package-lock.json for the deploy pack. Fix dependency resolution locally, then retry.",
-        )
+    if !output.status.success() {
+        let err = String::from_utf8_lossy(&output.stderr);
+        let detail = err.trim();
+        if detail.is_empty() {
+            return Err(CliError::usage(
+                "npm could not generate package-lock.json for the deploy pack. Fix dependency resolution locally, then retry.",
+            )
+            .into());
+        }
+        return Err(CliError::usage(format!(
+            "npm could not generate package-lock.json for the deploy pack:\n{detail}"
+        ))
         .into());
     }
     if !staged.join("package-lock.json").is_file() {

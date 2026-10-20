@@ -122,9 +122,18 @@ pub fn pack(root: &Path, manifest: &Value, dir: Option<&str>) -> anyhow::Result<
     zip_files(collect(root, manifest, dir)?)
 }
 
+#[allow(dead_code)]
 pub fn pack_source(root: &Path) -> anyhow::Result<Bundle> {
+    pack_source_with(root, |_| {})
+}
+
+pub fn pack_source_with(
+    root: &Path,
+    mut on_phase: impl FnMut(crate::workspace_pack::PackPhase),
+) -> anyhow::Result<Bundle> {
     let root = root.canonicalize()?;
-    let staged = crate::workspace_pack::stage_for_deploy(&root)?;
+    let staged = crate::workspace_pack::stage_for_deploy_with(&root, |p| on_phase(p))?;
+    on_phase(crate::workspace_pack::PackPhase::Zipping);
     let files = crate::workspace_pack::collect_staged_files(&staged.staged_root)?;
     let mut bundle = zip_files(files)?;
     bundle.vendored_packages = staged.vendored_packages;

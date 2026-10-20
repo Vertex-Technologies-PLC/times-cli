@@ -298,6 +298,9 @@ pub enum AipCmd {
         /// Bump times.aip.json (and package.json) before deploying. Local deploys only
         #[arg(long, value_enum, value_name = "LEVEL", conflicts_with = "remote")]
         bump: Option<Level>,
+        /// Stream full depot build logs (default: quiet status only)
+        #[arg(long, env = "TIMES_DEPLOY_VERBOSE")]
+        verbose: bool,
     },
     /// Scan the project (local by default, or via depot with --remote)
     Scan {
@@ -307,6 +310,9 @@ pub enum AipCmd {
         /// Poll the depot job until it finishes (implies --remote). Default on for --remote
         #[arg(long = "no-follow", action = clap::ArgAction::SetFalse, default_value_t = true)]
         follow: bool,
+        /// Stream full depot scan logs
+        #[arg(long, env = "TIMES_DEPLOY_VERBOSE")]
+        verbose: bool,
     },
     /// Retry a failed, cancelled, or timed-out depot job
     Retry {
@@ -315,6 +321,9 @@ pub enum AipCmd {
         /// Poll until the new job finishes
         #[arg(long = "no-follow", action = clap::ArgAction::SetFalse, default_value_t = true)]
         follow: bool,
+        /// Stream full depot build logs
+        #[arg(long, env = "TIMES_DEPLOY_VERBOSE")]
+        verbose: bool,
     },
     /// Check auth, manifest, hosting and listing
     Doctor,

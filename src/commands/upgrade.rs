@@ -1,5 +1,6 @@
 use std::io::{BufRead, BufReader};
 use std::process::{Command, Stdio};
+use std::sync::{Arc, Mutex};
 use std::thread;
 
 use anyhow::Context;
@@ -81,8 +82,6 @@ fn run_installer(out: &Output) -> anyhow::Result<()> {
             .status()
             .context("Could not start PowerShell to run the times installer")?
     } else {
-        // QUIET=1 skips the final `times --version` line. Progress steps from
-        // install.sh still stream so upgrade does not look hung.
         let script = format!("curl -fsSL {INSTALL_SH} | sh");
         let mut child = Command::new("sh")
             .arg("-c")
@@ -96,11 +95,28 @@ fn run_installer(out: &Output) -> anyhow::Result<()> {
         let stdout = child.stdout.take();
         let stderr = child.stderr.take();
         let show = !out.json;
+        let pb = if show {
+            Some(out.percent_bar("Installing"))
+        } else {
+            None
+        };
+        let log = Arc::new(Mutex::new(Vec::<String>::new()));
+        let log_out = Arc::clone(&log);
+        let log_err = Arc::clone(&log);
+        let pb_out = pb.clone();
+        let pb_err = pb.clone();
+
         let out_thread = thread::spawn(move || {
             if let Some(pipe) = stdout {
                 for line in BufReader::new(pipe).lines().map_while(Result::ok) {
-                    if show {
-                        eprintln!("{line}");
+                    if let Some(bar) = &pb_out {
+                        if let Some((n, total)) = parse_progress_line(&line) {
+                            set_progress_pct(bar, n, total);
+                            continue;
+                        }
+                    }
+                    if let Ok(mut g) = log_out.lock() {
+                        g.push(line);
                     }
                 }
             }
@@ -108,8 +124,14 @@ fn run_installer(out: &Output) -> anyhow::Result<()> {
         let err_thread = thread::spawn(move || {
             if let Some(pipe) = stderr {
                 for line in BufReader::new(pipe).lines().map_while(Result::ok) {
-                    if show {
-                        eprintln!("{line}");
+                    if let Some(bar) = &pb_err {
+                        if let Some((n, total)) = parse_progress_line(&line) {
+                            set_progress_pct(bar, n, total);
+                            continue;
+                        }
+                    }
+                    if let Ok(mut g) = log_err.lock() {
+                        g.push(line);
                     }
                 }
             }
@@ -119,6 +141,19 @@ fn run_installer(out: &Output) -> anyhow::Result<()> {
             .context("Could not wait for the times installer")?;
         let _ = out_thread.join();
         let _ = err_thread.join();
+        if let Some(bar) = pb {
+            if status.success() {
+                bar.set_position(100);
+            }
+            bar.finish_and_clear();
+        }
+        if !status.success() {
+            let lines = log.lock().map(|g| g.clone()).unwrap_or_default();
+            let tail = tail_lines(&lines, 40);
+            if !tail.is_empty() {
+                eprintln!("{tail}");
+            }
+        }
         status
     };
     if !status.success() {
@@ -131,4 +166,50 @@ fn run_installer(out: &Output) -> anyhow::Result<()> {
         )));
     }
     Ok(())
+}
+
+fn set_progress_pct(bar: &indicatif::ProgressBar, n: u64, total: u64) {
+    let pct = if total == 0 {
+        0
+    } else {
+        ((n.saturating_mul(100)) / total).min(100)
+    };
+    bar.set_position(pct);
+}
+
+/// Parse `PROGRESS n/N` from install.sh (quiet mode).
+pub fn parse_progress_line(line: &str) -> Option<(u64, u64)> {
+    let rest = line.trim().strip_prefix("PROGRESS ")?;
+    let (a, b) = rest.split_once('/')?;
+    let n = a.trim().parse().ok()?;
+    let total = b.trim().parse().ok()?;
+    if total == 0 {
+        return None;
+    }
+    Some((n, total))
+}
+
+fn tail_lines(lines: &[String], max: usize) -> String {
+    let start = lines.len().saturating_sub(max);
+    lines[start..].join("\n")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_progress_lines() {
+        assert_eq!(parse_progress_line("PROGRESS 1/5"), Some((1, 5)));
+        assert_eq!(parse_progress_line("  PROGRESS 3/5  "), Some((3, 5)));
+        assert_eq!(parse_progress_line("PROGRESS 5/5"), Some((5, 5)));
+        assert_eq!(parse_progress_line("times installer: done."), None);
+        assert_eq!(parse_progress_line("PROGRESS 0/0"), None);
+    }
+
+    #[test]
+    fn tail_keeps_last_n() {
+        let lines: Vec<String> = (1..=5).map(|i| i.to_string()).collect();
+        assert_eq!(tail_lines(&lines, 2), "4\n5");
+    }
 }

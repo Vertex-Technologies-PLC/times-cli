@@ -29,13 +29,22 @@ pub async fn run(ctx: &mut Ctx, cmd: AipCmd) -> anyhow::Result<()> {
             follow,
             submit,
             bump,
-        } => deploy(ctx, dir, remote, r#ref, follow, submit, bump).await,
+            verbose,
+        } => deploy(ctx, dir, remote, r#ref, follow, submit, bump, verbose).await,
         AipCmd::Submit { notes, version } => submit(ctx, notes, version).await,
         AipCmd::Status { slug, version } => status(ctx, slug, version).await,
         AipCmd::Withdraw { version, slug } => withdraw(ctx, slug, version).await,
         AipCmd::Logs { slug, version } => logs(ctx, slug, version).await,
-        AipCmd::Scan { remote, follow } => scan_only(ctx, remote, follow).await,
-        AipCmd::Retry { id, follow } => retry_job(ctx, id, follow).await,
+        AipCmd::Scan {
+            remote,
+            follow,
+            verbose,
+        } => scan_only(ctx, remote, follow, verbose).await,
+        AipCmd::Retry {
+            id,
+            follow,
+            verbose,
+        } => retry_job(ctx, id, follow, verbose).await,
         AipCmd::Doctor => doctor(ctx).await,
         AipCmd::Delete { slug } => delete_aip(ctx, slug).await,
         AipCmd::Open { slug } => open_aip(ctx, slug).await,
@@ -227,6 +236,7 @@ async fn deploy(
     follow: bool,
     submit_after: bool,
     bump_level: Option<crate::manifest::bump::Level>,
+    verbose: bool,
 ) -> anyhow::Result<()> {
     let project_dir = if dir.as_os_str() == "." {
         PathBuf::from(".")
@@ -287,15 +297,7 @@ async fn deploy(
         if !ctx.out.json {
             ctx.out.step(1, 3, format!("Packing source for {slug}"));
         }
-        let pack_spin = ctx.out.spinner("Packing source…");
-        let packed = bundle::pack_source(&root)?;
-        pack_spin.finish_and_clear();
-        if !ctx.out.json && !packed.vendored_packages.is_empty() {
-            ctx.out.info(format!(
-                "  Vendored {} for the depot build.",
-                packed.vendored_packages.join(", ")
-            ));
-        }
+        let packed = pack_source_phased(ctx, &root)?;
         let size = packed.bytes.len() as u64;
         if size > MAX_BUNDLE_BYTES {
             return Err(CliError::validation(format!(
@@ -337,7 +339,7 @@ async fn deploy(
     };
 
     let job = if follow {
-        follow_job(ctx, &token, job).await?
+        follow_job(ctx, &token, job, verbose).await?
     } else {
         job
     };
@@ -360,6 +362,22 @@ async fn deploy(
         ));
     }
     Ok(())
+}
+
+fn pack_source_phased(ctx: &Ctx, root: &std::path::Path) -> anyhow::Result<bundle::Bundle> {
+    use crate::workspace_pack::PackPhase;
+    bundle::pack_source_with(root, |phase| {
+        if ctx.out.json {
+            return;
+        }
+        let msg = match phase {
+            PackPhase::Copying => "copying project files".into(),
+            PackPhase::Vendoring(name) => format!("vendoring {name}"),
+            PackPhase::RegeneratingLockfile => "regenerating package-lock.json".into(),
+            PackPhase::Zipping => "zipping source".into(),
+        };
+        ctx.out.info(format!("  · {msg}"));
+    })
 }
 
 fn print_deploy_result(ctx: &Ctx, job: &DepotJob) {
@@ -411,9 +429,15 @@ fn job_status_label(status: &str) -> &'static str {
     }
 }
 
-async fn follow_job(ctx: &mut Ctx, token: &str, mut job: DepotJob) -> anyhow::Result<DepotJob> {
+async fn follow_job(
+    ctx: &mut Ctx,
+    token: &str,
+    mut job: DepotJob,
+    verbose: bool,
+) -> anyhow::Result<DepotJob> {
     let mut after: i64 = 0;
     let mut last_status = String::new();
+    let mut quiet_tail: Vec<String> = Vec::new();
     let spinner = ctx.out.spinner(format!(
         "{} · {}",
         job.slug,
@@ -438,9 +462,20 @@ async fn follow_job(ctx: &mut Ctx, token: &str, mut job: DepotJob) -> anyhow::Re
                                 .as_deref()
                                 .or(line.line.as_deref())
                                 .unwrap_or("");
-                            ctx.out.log_line(line.stream.as_deref(), text);
                             if let Some(id) = line.id.or(line.seq) {
                                 after = after.max(id);
+                            }
+                            if text.is_empty() {
+                                continue;
+                            }
+                            if verbose {
+                                ctx.out.log_line(line.stream.as_deref(), text);
+                            } else if keep_quiet_log_line(text) {
+                                quiet_tail.push(text.to_string());
+                                if quiet_tail.len() > 80 {
+                                    let drain = quiet_tail.len() - 80;
+                                    quiet_tail.drain(0..drain);
+                                }
                             }
                         }
                     });
@@ -451,6 +486,17 @@ async fn follow_job(ctx: &mut Ctx, token: &str, mut job: DepotJob) -> anyhow::Re
             spinner.finish_and_clear();
             if !ctx.out.json {
                 ctx.out.status_line(&job.status);
+                if job.status != "succeeded" && !verbose {
+                    if let Some(err) = job.error_message.as_deref().filter(|s| !s.is_empty()) {
+                        ctx.out.warn(err.to_string());
+                    }
+                    let tail = quiet_failure_tail(&quiet_tail, 40);
+                    if !tail.is_empty() {
+                        for line in tail {
+                            ctx.out.log_line(Some("stderr"), &line);
+                        }
+                    }
+                }
             }
             return Ok(job);
         }
@@ -486,6 +532,27 @@ async fn follow_job(ctx: &mut Ctx, token: &str, mut job: DepotJob) -> anyhow::Re
             }
         }
     }
+}
+
+fn keep_quiet_log_line(text: &str) -> bool {
+    let t = text.trim();
+    if t.is_empty() {
+        return false;
+    }
+    if t.starts_with("npm notice") || t.starts_with("npm warn deprecated") {
+        return false;
+    }
+    true
+}
+
+fn quiet_failure_tail(lines: &[String], max: usize) -> Vec<String> {
+    let filtered: Vec<String> = lines
+        .iter()
+        .filter(|l| keep_quiet_log_line(l))
+        .cloned()
+        .collect();
+    let start = filtered.len().saturating_sub(max);
+    filtered[start..].to_vec()
 }
 
 fn is_retryable_edge(err: &anyhow::Error) -> bool {
@@ -731,11 +798,11 @@ async fn withdraw(ctx: &mut Ctx, slug: Option<String>, version: String) -> anyho
     Ok(())
 }
 
-async fn scan_only(ctx: &mut Ctx, remote: bool, follow: bool) -> anyhow::Result<()> {
+async fn scan_only(ctx: &mut Ctx, remote: bool, follow: bool, verbose: bool) -> anyhow::Result<()> {
     let loaded = load_manifest()?;
     require_valid_manifest(ctx, &loaded)?;
     if remote {
-        return scan_remote(ctx, &loaded, follow).await;
+        return scan_remote(ctx, &loaded, follow, verbose).await;
     }
     if !ctx.out.json {
         ctx.out.step(1, 3, "Resolving hosting and entry");
@@ -780,7 +847,12 @@ async fn scan_only(ctx: &mut Ctx, remote: bool, follow: bool) -> anyhow::Result<
     Ok(())
 }
 
-async fn scan_remote(ctx: &mut Ctx, loaded: &Loaded, follow: bool) -> anyhow::Result<()> {
+async fn scan_remote(
+    ctx: &mut Ctx,
+    loaded: &Loaded,
+    follow: bool,
+    verbose: bool,
+) -> anyhow::Result<()> {
     let m = &loaded.value;
     let slug = str_at(m, "/slug")
         .ok_or_else(|| CliError::validation("times.aip.json has no slug."))?
@@ -790,7 +862,7 @@ async fn scan_remote(ctx: &mut Ctx, loaded: &Loaded, follow: bool) -> anyhow::Re
     if !ctx.out.json {
         ctx.out.step(1, 3, format!("Packing source for {slug}"));
     }
-    let packed = bundle::pack_source(&loaded.root)?;
+    let packed = pack_source_phased(ctx, &loaded.root)?;
     let size = packed.bytes.len() as u64;
     if size > MAX_BUNDLE_BYTES {
         return Err(CliError::validation(format!(
@@ -805,12 +877,6 @@ async fn scan_remote(ctx: &mut Ctx, loaded: &Loaded, follow: bool) -> anyhow::Re
             packed.files.len(),
             human_size(size)
         ));
-        if !packed.vendored_packages.is_empty() {
-            ctx.out.info(format!(
-                "  Vendored {} for the depot build.",
-                packed.vendored_packages.join(", ")
-            ));
-        }
         ctx.out.step(2, 3, "Uploading source to depot");
     }
     let source_sha = packed.sha256.clone();
@@ -830,7 +896,7 @@ async fn scan_remote(ctx: &mut Ctx, loaded: &Loaded, follow: bool) -> anyhow::Re
         ctx.out.success(format!("Queued scan job {}", job.id));
     }
     let job = if follow {
-        follow_job(ctx, &token, job).await?
+        follow_job(ctx, &token, job, verbose).await?
     } else {
         job
     };
@@ -848,7 +914,7 @@ async fn scan_remote(ctx: &mut Ctx, loaded: &Loaded, follow: bool) -> anyhow::Re
     Ok(())
 }
 
-async fn retry_job(ctx: &mut Ctx, id: String, follow: bool) -> anyhow::Result<()> {
+async fn retry_job(ctx: &mut Ctx, id: String, follow: bool, verbose: bool) -> anyhow::Result<()> {
     let token = ctx.erp_token().await?;
     let job: DepotJob = ctx
         .client
@@ -862,7 +928,7 @@ async fn retry_job(ctx: &mut Ctx, id: String, follow: bool) -> anyhow::Result<()
         ctx.out.info(format!("Queued retry job {}.", job.id));
     }
     let job = if follow {
-        follow_job(ctx, &token, job).await?
+        follow_job(ctx, &token, job, verbose).await?
     } else {
         job
     };
@@ -1206,5 +1272,20 @@ mod tests {
             version_path("my-app", "1.0.0"),
             "/api/v1/developers/aips/my-app/versions/1.0.0"
         );
+    }
+
+    #[test]
+    fn quiet_log_filter_drops_npm_noise() {
+        assert!(!keep_quiet_log_line("npm notice Changelog: …"));
+        assert!(!keep_quiet_log_line("npm warn deprecated foo@1.0.0"));
+        assert!(keep_quiet_log_line("Error: Cannot find module './package.json'"));
+        assert!(keep_quiet_log_line("building"));
+    }
+
+    #[test]
+    fn quiet_failure_tail_keeps_last_lines() {
+        let lines: Vec<String> = (1..=5).map(|i| format!("line {i}")).collect();
+        let tail = quiet_failure_tail(&lines, 2);
+        assert_eq!(tail, vec!["line 4".to_string(), "line 5".to_string()]);
     }
 }
