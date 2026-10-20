@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.15
+
+- `times upgrade` prints the changelog link once (after success), not before and after.
+- Streams installer progress steps; warns if shellenv could not be written.
+- First CLI run refreshes a stale shellenv file (PATH order) without requiring `times upgrade`.
+- Fresh install docs use `curl … | sh`, then `. ~/.config/times/shellenv` in this terminal.
+
 ## 0.4.14
 
 - `times upgrade` and `install.sh` print progress while downloading and installing (no more silent hang).
@@ -16,7 +23,7 @@
 ## 0.4.12
 
 - `times upgrade` installs quietly and no longer asks you to source shellenv or open a new terminal. Shell config is still written automatically.
-- Fresh install one-liner: `curl … | . /dev/stdin`. The script applies shellenv in that shell (PATH + builtin disable).
+- Fresh install one-liner: `curl … | sh`, then `. ~/.config/times/shellenv` in this terminal.
 
 ## 0.4.11
 

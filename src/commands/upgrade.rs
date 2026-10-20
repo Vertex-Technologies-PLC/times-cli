@@ -28,17 +28,13 @@ pub async fn run(out: &Output) -> anyhow::Result<()> {
         }
         if !out.json {
             out.info(format!("Installing times {latest}. You have {current}."));
-            out.info(format!("Changelog: {CHANGELOG_URL}"));
         }
     } else if !out.json {
         out.info("Could not check GitHub for the latest version. Running the installer anyway.");
     }
 
-    if !out.json {
-        out.info("Downloading and installing (this can take a minute)…");
-    }
     run_installer(out)?;
-    let _ = ensure_shell_after_upgrade();
+    let shell_ok = ensure_shell_after_upgrade();
 
     if out.json {
         return out.json(&json!({
@@ -46,6 +42,7 @@ pub async fn run(out: &Output) -> anyhow::Result<()> {
             "latest": latest.map(|v| v.to_string()),
             "upgraded": true,
             "changelog": CHANGELOG_URL,
+            "shellConfigured": shell_ok,
         }));
     }
     out.success(format!(
@@ -56,6 +53,9 @@ pub async fn run(out: &Output) -> anyhow::Result<()> {
             .unwrap_or_else(|| "latest".into())
     ));
     out.info(format!("Changelog: {CHANGELOG_URL}"));
+    if !shell_ok {
+        out.warn("Could not update shellenv. Run: times setup-shell");
+    }
     out.info("If this shell still shows the old version, run: . ~/.config/times/shellenv");
     Ok(())
 }
@@ -67,8 +67,6 @@ fn ensure_shell_after_upgrade() -> bool {
     let Ok(config_dir) = crate::config::config_dir() else {
         return false;
     };
-    // Always rewrite shellenv so PATH priority fixes ship on upgrade, not only
-    // the first install.
     crate::shell::apply(&config_dir, &crate::shell::default_bin_dirs()).is_ok()
 }
 
@@ -83,8 +81,8 @@ fn run_installer(out: &Output) -> anyhow::Result<()> {
             .status()
             .context("Could not start PowerShell to run the times installer")?
     } else {
-        // QUIET=1 only skips the final `times --version` line. Progress steps
-        // from install.sh still stream so upgrade does not look hung.
+        // QUIET=1 skips the final `times --version` line. Progress steps from
+        // install.sh still stream so upgrade does not look hung.
         let script = format!("curl -fsSL {INSTALL_SH} | sh");
         let mut child = Command::new("sh")
             .arg("-c")

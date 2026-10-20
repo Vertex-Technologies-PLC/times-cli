@@ -102,10 +102,21 @@ pub fn is_configured(config_dir: &Path) -> bool {
 }
 
 pub fn ensure(config_dir: &Path) -> anyhow::Result<Option<SetupReport>> {
+    let bin_dirs = default_bin_dirs();
+    let expected = shellenv_body(&bin_dirs);
+    let shellenv = config_dir.join("shellenv");
+    let stale = !shellenv.is_file()
+        || fs::read_to_string(&shellenv)
+            .map(|text| text != expected)
+            .unwrap_or(true);
     if is_configured(config_dir) {
+        if stale {
+            // RC hooks already exist; refresh shellenv body (PATH order fixes).
+            apply(config_dir, &bin_dirs)?;
+        }
         return Ok(None);
     }
-    Ok(Some(apply(config_dir, &default_bin_dirs())?))
+    Ok(Some(apply(config_dir, &bin_dirs)?))
 }
 
 fn rc_snippet(shellenv: &Path) -> String {
@@ -252,6 +263,26 @@ mod tests {
         assert!(ensure(&config).unwrap().is_some());
         assert!(is_configured(&config));
         assert!(ensure(&config).unwrap().is_none());
+        match prev_home {
+            Some(v) => env::set_var("HOME", v),
+            None => env::remove_var("HOME"),
+        }
+    }
+
+    #[test]
+    fn ensure_rewrites_stale_shellenv() {
+        let home = TempDir::new().unwrap();
+        let config = home.path().join("config");
+        let prev_home = env::var_os("HOME");
+        env::set_var("HOME", home.path());
+        fs::write(home.path().join(".zshrc"), "").unwrap();
+        assert!(ensure(&config).unwrap().is_some());
+        let shellenv = config.join("shellenv");
+        fs::write(&shellenv, "# stale shellenv\n").unwrap();
+        assert!(ensure(&config).unwrap().is_none());
+        let body = fs::read_to_string(&shellenv).unwrap();
+        assert!(body.contains(".local/bin"));
+        assert!(!body.contains("# stale shellenv"));
         match prev_home {
             Some(v) => env::set_var("HOME", v),
             None => env::remove_var("HOME"),

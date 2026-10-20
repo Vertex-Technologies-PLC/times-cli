@@ -16,4 +16,4 @@ hosting = "github"
 # Install next to other user binaries, not rustup's CARGO_HOME
 install-path = "$HOME/.local/bin"
 # zsh and bash ship a builtin named times. Full path so setup-shell is not intercepted.
-install-success-msg = "Prefer https://developers.times.et/install.sh via: curl -fsSL https://developers.times.et/install.sh | . /dev/stdin"
+install-success-msg = "Prefer: curl -fsSL https://developers.times.et/install.sh | sh && . ~/.config/times/shellenv"
