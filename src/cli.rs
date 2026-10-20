@@ -296,8 +296,23 @@ pub enum AipCmd {
         #[arg(long)]
         submit: bool,
     },
-    /// Scan the project without uploading
-    Scan,
+    /// Scan the project (local by default, or via depot with --remote)
+    Scan {
+        /// Upload source and run an authoritative depot scan_only job
+        #[arg(long)]
+        remote: bool,
+        /// Poll the depot job until it finishes (implies --remote)
+        #[arg(long)]
+        follow: bool,
+    },
+    /// Retry a failed, cancelled, or timed-out depot job
+    Retry {
+        /// Depot job ID
+        id: String,
+        /// Poll until the new job finishes
+        #[arg(long)]
+        follow: bool,
+    },
     /// Check auth, manifest, hosting and listing
     Doctor,
     /// Delete a draft AIP that was never published

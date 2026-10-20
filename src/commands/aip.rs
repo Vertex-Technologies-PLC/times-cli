@@ -36,7 +36,8 @@ pub async fn run(ctx: &mut Ctx, cmd: AipCmd) -> anyhow::Result<()> {
         AipCmd::Status { slug, version } => status(ctx, slug, version).await,
         AipCmd::Withdraw { version, slug } => withdraw(ctx, slug, version).await,
         AipCmd::Logs { slug, version } => logs(ctx, slug, version).await,
-        AipCmd::Scan => scan_only(ctx).await,
+        AipCmd::Scan { remote, follow } => scan_only(ctx, remote || follow, follow).await,
+        AipCmd::Retry { id, follow } => retry_job(ctx, id, follow).await,
         AipCmd::Doctor => doctor(ctx).await,
         AipCmd::Delete { slug } => delete_aip(ctx, slug).await,
         AipCmd::Open { slug } => open_aip(ctx, slug).await,
@@ -605,9 +606,12 @@ async fn withdraw(ctx: &mut Ctx, slug: Option<String>, version: String) -> anyho
     Ok(())
 }
 
-async fn scan_only(ctx: &mut Ctx) -> anyhow::Result<()> {
+async fn scan_only(ctx: &mut Ctx, remote: bool, follow: bool) -> anyhow::Result<()> {
     let loaded = load_manifest()?;
     require_valid_manifest(ctx, &loaded)?;
+    if remote {
+        return scan_remote(ctx, &loaded, follow).await;
+    }
     let hosting = hosting::resolve(&loaded.value)?;
     let packed = if hosting.needs_bundle(&loaded.value)
         && !hosting::output_dir_missing(&loaded.root, &loaded.value)
@@ -630,6 +634,92 @@ async fn scan_only(ctx: &mut Ctx) -> anyhow::Result<()> {
     crate::scan::fail_if_any(findings)?;
     ctx.out
         .success("Scan passed. Human review is still required before publish.");
+    Ok(())
+}
+
+async fn scan_remote(ctx: &mut Ctx, loaded: &Loaded, follow: bool) -> anyhow::Result<()> {
+    let m = &loaded.value;
+    let slug = str_at(m, "/slug")
+        .ok_or_else(|| CliError::validation("times.aip.json has no slug."))?
+        .to_string();
+    let version = str_at(m, "/version").map(str::to_string);
+    let token = ctx.erp_token().await?;
+    let packed = bundle::pack_source(&loaded.root)?;
+    let size = packed.bytes.len() as u64;
+    if size > MAX_BUNDLE_BYTES {
+        return Err(CliError::validation(format!(
+            "The source zip is {}. The limit is {}.",
+            human_size(size),
+            human_size(MAX_BUNDLE_BYTES)
+        )));
+    }
+    let ticket: SourceUploadTicket = ctx
+        .client
+        .post(
+            "/api/v1/depot/source-upload-url",
+            Some(&token),
+            &json!({
+                "sha256": packed.sha256,
+                "content_type": bundle::CONTENT_TYPE,
+            }),
+        )
+        .await?;
+    upload_bytes(ctx, &ticket.upload_url, packed.bytes, bundle::CONTENT_TYPE).await?;
+    let body = json!({
+        "slug": slug,
+        "kind": "scan_only",
+        "trigger_kind": "cli_local",
+        "source_blob_sha": packed.sha256,
+        "version": version,
+    });
+    let job: DepotJob = ctx
+        .client
+        .post("/api/v1/depot/jobs", Some(&token), &body)
+        .await?;
+    if !ctx.out.json {
+        ctx.out.info(format!("Queued depot scan job {}.", job.id));
+    }
+    let job = if follow {
+        follow_job(ctx, &token, job).await?
+    } else {
+        job
+    };
+    if ctx.out.json {
+        return ctx.out.json(&job);
+    }
+    print_deploy_result(ctx, &job);
+    if job.status != "succeeded" {
+        return Err(CliError::usage(
+            "Depot scan did not succeed. Fix findings, then run `times aip scan --remote` again.",
+        ));
+    }
+    ctx.out
+        .success("Depot scan passed. Human review is still required before publish.");
+    Ok(())
+}
+
+async fn retry_job(ctx: &mut Ctx, id: String, follow: bool) -> anyhow::Result<()> {
+    let token = ctx.erp_token().await?;
+    let job: DepotJob = ctx
+        .client
+        .post(
+            &format!("/api/v1/depot/jobs/{}/retry", seg(&id)),
+            Some(&token),
+            &json!({}),
+        )
+        .await?;
+    if !ctx.out.json {
+        ctx.out.info(format!("Queued retry job {}.", job.id));
+    }
+    let job = if follow {
+        follow_job(ctx, &token, job).await?
+    } else {
+        job
+    };
+    if ctx.out.json {
+        return ctx.out.json(&job);
+    }
+    print_deploy_result(ctx, &job);
     Ok(())
 }
 
