@@ -11,7 +11,6 @@ mod hosting;
 mod manifest;
 mod netutil;
 mod origin;
-mod push_state;
 mod scan;
 mod shell;
 mod ui;

@@ -259,10 +259,10 @@ pub fn run(out: &Output, args: InitArgs) -> anyhow::Result<()> {
             out.info("  bun install");
             out.info("  bun run dev");
             out.info(
-                "Set hosting.entryUrl to your production HTTPS origin before `times aip push`.",
+                "Set hosting.entryUrl to your production HTTPS origin before `times aip deploy`.",
             );
             out.info("  times aip origin check");
-            out.info("  times aip push");
+            out.info("  times aip deploy");
         }
         HostingProvider::Times => {
             match opts.framework {
@@ -273,7 +273,7 @@ pub fn run(out: &Output, args: InitArgs) -> anyhow::Result<()> {
                 }
             }
             out.info("  times dev");
-            out.info("  times aip push");
+            out.info("  times aip deploy");
         }
     }
     Ok(())

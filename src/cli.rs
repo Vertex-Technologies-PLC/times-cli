@@ -66,7 +66,7 @@ pub enum Command {
     Manifest(ManifestCmd),
     /// Serve your build locally for preview
     Dev(DevArgs),
-    /// Create, push and submit AIPs
+    /// Create, deploy and submit AIPs
     #[command(subcommand)]
     Aip(AipCmd),
     /// Show installs, usage and revenue
@@ -277,24 +277,6 @@ pub enum AipCmd {
     Info {
         /// Defaults to the slug in times.aip.json
         slug: Option<String>,
-    },
-    /// Bundle and upload the current version
-    Push {
-        /// Build output folder. Defaults to the folder of ui.entry. Not the project root
-        #[arg(long)]
-        dir: Option<String>,
-        /// Do not run package.json build if the output folder is missing
-        #[arg(long)]
-        no_build: bool,
-        /// Upload even if .times/push-state.json matches
-        #[arg(long)]
-        force: bool,
-        /// Submit for review after a successful push
-        #[arg(long)]
-        submit: bool,
-        /// Skip the live origin probe (CI only, after you already probed)
-        #[arg(long)]
-        skip_probe: bool,
     },
     /// Build and stage via TIMES depot (local zip or remote GitHub)
     Deploy {

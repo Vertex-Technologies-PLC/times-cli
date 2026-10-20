@@ -342,7 +342,7 @@ fn entry_checks(m: &Value, root: Option<&Path>, r: &mut Report) {
         if !entry.starts_with("https://") && !relative(root, entry).is_file() {
             r.warn(
                 "/ui/entry",
-                format!("{entry} does not exist yet. Build your app before `times aip push`."),
+                format!("{entry} does not exist yet. Build your app before `times aip deploy`."),
             );
         }
     }

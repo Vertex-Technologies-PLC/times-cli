@@ -194,8 +194,24 @@ async fn scaffold(env: &Env) -> PathBuf {
         String::from_utf8_lossy(&out.stderr)
     );
     let dir = env.work.path().join("demo-app");
+    let _ = std::fs::remove_dir_all(dir.join("out"));
+    let _ = std::fs::remove_dir_all(dir.join("dist"));
+    let _ = std::fs::remove_dir_all(dir.join("build"));
     std::fs::create_dir_all(dir.join("dist")).unwrap();
-    std::fs::write(dir.join("dist/index.html"), "<!doctype html><p>hi</p>").unwrap();
+    std::fs::write(
+        dir.join("dist/index.html"),
+        concat!(
+            "<!doctype html><html><head><style>",
+            "[data-theme=claude]{}[data-theme=discord]{}[data-theme=supabase]{}",
+            "[data-theme=vercel]{}[data-theme=mono]{}[data-theme=notebook]{}",
+            "[data-theme=light-green]{}[data-theme=zen]{}[data-theme=astro-vista]{}",
+            "[data-theme=whatsapp]{}",
+            "</style></head><body>",
+            "<script>createTimesAipClient();syncPreferencesFromApi()</script>",
+            "<p>hi</p></body></html>"
+        ),
+    )
+    .unwrap();
     dir
 }
 
@@ -360,90 +376,109 @@ async fn org_use_resolves_slug_and_selects() {
     assert!(!out.status.success());
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn push_uploads_bundle_and_submit_sends_notes() {
-    let server = MockServer::start().await;
-    let env = Env::new(&server);
-    mock_pat(&server).await;
-    let dir = scaffold(&env).await;
-    let base = "/api/v1/developers/aips/demo-app";
+fn depot_ok(status: u16, data: Value) -> ResponseTemplate {
+    ResponseTemplate::new(status).set_body_json(json!({
+        "success": true, "data": data
+    }))
+}
 
+fn depot_job(status: &str) -> Value {
+    json!({
+        "id": "job-1",
+        "slug": "demo-app",
+        "kind": "build_and_stage",
+        "status": status,
+        "trigger_kind": "cli_local",
+        "version": "1.0.0",
+        "attempt": 1
+    })
+}
+
+async fn mock_depot_local_deploy(server: &MockServer, upload_path: &str) {
     Mock::given(method("POST"))
-        .and(path(format!("{base}/versions")))
+        .and(path("/api/v1/depot/source-upload-url"))
         .and(header("authorization", "Bearer pat-access"))
-        .and(body_partial_json(json!({
-            "version": "1.0.0",
-            "manifest": { "slug": "demo-app" },
-            "changelog": "First release."
-        })))
-        .respond_with(erp_ok(201, submission("draft")))
-        .expect(1)
-        .mount(&server)
-        .await;
-    Mock::given(method("POST"))
-        .and(path(format!("{base}/versions/1.0.0/bundle-upload-url")))
-        .and(body_partial_json(
-            json!({ "contentType": "application/zip" }),
-        ))
-        .respond_with(erp_ok(
-            201,
+        .respond_with(depot_ok(
+            200,
             json!({
-                "bundleId": "7d7f7c3e-0000-4000-8000-000000000001",
-                "uploadUrl": format!("{}/upload/abc", server.uri()),
-                "contentType": "application/zip",
-                "maxBytes": 52428800,
-                "expiresInSeconds": 900
+                "upload_url": format!("{}{}", server.uri(), upload_path),
+                "storage_key": "cas/abc",
+                "sha256": "deadbeef"
             }),
         ))
         .expect(1)
-        .mount(&server)
+        .mount(server)
         .await;
     Mock::given(method("PUT"))
-        .and(path("/upload/abc"))
+        .and(path(upload_path))
         .and(header("content-type", "application/zip"))
         .respond_with(ResponseTemplate::new(200))
         .expect(1)
-        .mount(&server)
+        .mount(server)
         .await;
     Mock::given(method("POST"))
-        .and(path(format!("{base}/versions/1.0.0/bundle-complete")))
-        .and(body_partial_json(
-            json!({ "bundleId": "7d7f7c3e-0000-4000-8000-000000000001" }),
-        ))
-        .respond_with(erp_ok(200, submission("uploaded")))
+        .and(path("/api/v1/depot/jobs"))
+        .and(header("authorization", "Bearer pat-access"))
+        .and(body_partial_json(json!({
+            "slug": "demo-app",
+            "kind": "build_and_stage",
+            "trigger_kind": "cli_local"
+        })))
+        .respond_with(depot_ok(202, depot_job("queued")))
         .expect(1)
-        .mount(&server)
+        .mount(server)
         .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn deploy_uploads_source_and_queues_job() {
+    let server = MockServer::start().await;
+    let env = Env::new(&server);
+    mock_pat(&server).await;
+    mock_depot_local_deploy(&server, "/upload/src").await;
+    let dir = scaffold(&env).await;
 
     let out = env
-        .run(&dir, &["aip", "push", "--json"], Some("tdk_test"))
+        .run(&dir, &["aip", "deploy", "--json"], Some("tdk_test"))
         .await;
     assert!(
         out.status.success(),
-        "{}",
+        "code={:?} stdout={} stderr={}",
+        out.status.code(),
+        String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr)
     );
-    assert_eq!(stdout_json(&out)["status"], "uploaded");
+    let body = stdout_json(&out);
+    assert_eq!(body["id"], "job-1");
+    assert_eq!(body["status"], "queued");
+    assert_eq!(body["slug"], "demo-app");
 
     let requests = server.received_requests().await.unwrap();
     let put: &Request = requests
         .iter()
         .find(|r| r.method.as_str() == "PUT")
         .unwrap();
-    let complete = requests
-        .iter()
-        .find(|r| r.url.path().ends_with("bundle-complete"))
-        .unwrap();
-    let body: Value = serde_json::from_slice(&complete.body).unwrap();
-    assert_eq!(body["sizeBytes"].as_u64().unwrap() as usize, put.body.len());
-    assert_eq!(body["sha256"].as_str().unwrap().len(), 64);
     assert_eq!(&put.body[..2], b"PK");
+}
 
-    Mock::given(method("PATCH"))
-        .and(path(format!("{base}/versions/1.0.0")))
-        .and(body_json(json!({ "changelog": "Fixes for review" })))
-        .respond_with(erp_ok(200, submission("uploaded")))
-        .expect(1)
+#[tokio::test(flavor = "multi_thread")]
+async fn deploy_follow_submit_after_success() {
+    let server = MockServer::start().await;
+    let env = Env::new(&server);
+    mock_pat(&server).await;
+    mock_depot_local_deploy(&server, "/upload/follow").await;
+    let dir = scaffold(&env).await;
+    let base = "/api/v1/developers/aips/demo-app";
+
+    Mock::given(method("GET"))
+        .and(path("/api/v1/depot/jobs/job-1/logs"))
+        .respond_with(depot_ok(200, json!([])))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/depot/jobs/job-1"))
+        .respond_with(depot_ok(200, depot_job("succeeded")))
+        .expect(1..)
         .mount(&server)
         .await;
     Mock::given(method("POST"))
@@ -452,10 +487,11 @@ async fn push_uploads_bundle_and_submit_sends_notes() {
         .expect(1)
         .mount(&server)
         .await;
+
     let out = env
         .run(
             &dir,
-            &["aip", "submit", "--notes", "Fixes for review", "--json"],
+            &["aip", "deploy", "--follow", "--submit", "--json"],
             Some("tdk_test"),
         )
         .await;
@@ -465,56 +501,6 @@ async fn push_uploads_bundle_and_submit_sends_notes() {
         String::from_utf8_lossy(&out.stderr)
     );
     assert_eq!(stdout_json(&out)["status"], "in_review");
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn push_patches_existing_version() {
-    let server = MockServer::start().await;
-    let env = Env::new(&server);
-    mock_pat(&server).await;
-    let dir = scaffold(&env).await;
-    let base = "/api/v1/developers/aips/demo-app";
-
-    Mock::given(method("POST"))
-        .and(path(format!("{base}/versions")))
-        .respond_with(erp_err(
-            409,
-            "VERSION_EXISTS",
-            "This version already exists",
-        ))
-        .mount(&server)
-        .await;
-    Mock::given(method("PATCH"))
-        .and(path(format!("{base}/versions/1.0.0")))
-        .respond_with(erp_ok(200, submission("draft")))
-        .expect(1)
-        .mount(&server)
-        .await;
-    Mock::given(method("POST"))
-        .and(path(format!("{base}/versions/1.0.0/bundle-upload-url")))
-        .respond_with(erp_ok(
-            201,
-            json!({ "bundleId": "b1", "uploadUrl": format!("{}/upload/b1", server.uri()) }),
-        ))
-        .mount(&server)
-        .await;
-    Mock::given(method("PUT"))
-        .and(path("/upload/b1"))
-        .respond_with(ResponseTemplate::new(200))
-        .mount(&server)
-        .await;
-    Mock::given(method("POST"))
-        .and(path(format!("{base}/versions/1.0.0/bundle-complete")))
-        .respond_with(erp_ok(200, submission("uploaded")))
-        .mount(&server)
-        .await;
-
-    let out = env.run(&dir, &["aip", "push"], Some("tdk_test")).await;
-    assert!(
-        out.status.success(),
-        "{}",
-        String::from_utf8_lossy(&out.stderr)
-    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -657,7 +643,7 @@ async fn init_and_validate_work_offline() {
     let out = env.run(&dir, &["manifest", "validate"], None).await;
     assert_eq!(out.status.code(), Some(5));
 
-    let out = env.run(&dir, &["aip", "push"], Some("tdk_test")).await;
+    let out = env.run(&dir, &["aip", "deploy"], Some("tdk_test")).await;
     assert_eq!(out.status.code(), Some(5));
 
     for locale in ["en", "am", "om", "ti"] {
@@ -870,124 +856,33 @@ async fn profiles_switch_and_refresh() {
     assert_eq!(out.status.code(), Some(2));
 }
 
-async fn mock_times_push(server: &MockServer, upload_path: &str) {
-    let base = "/api/v1/developers/aips/demo-app";
+#[tokio::test(flavor = "multi_thread")]
+async fn deploy_remote_queues_clone_job() {
+    let server = MockServer::start().await;
+    let env = Env::new(&server);
+    mock_pat(&server).await;
+    let dir = scaffold(&env).await;
+
     Mock::given(method("POST"))
-        .and(path(format!("{base}/versions")))
-        .respond_with(erp_ok(201, submission("draft")))
-        .mount(server)
-        .await;
-    Mock::given(method("POST"))
-        .and(path(format!("{base}/versions/1.0.0/bundle-upload-url")))
-        .respond_with(erp_ok(
-            201,
+        .and(path("/api/v1/depot/jobs"))
+        .and(header("authorization", "Bearer pat-access"))
+        .and(body_partial_json(json!({
+            "slug": "demo-app",
+            "kind": "build_and_stage",
+            "trigger_kind": "cli_remote",
+            "github_repo_url": "https://github.com/acme/demo-app",
+            "git_ref": "main"
+        })))
+        .respond_with(depot_ok(
+            202,
             json!({
-                "bundleId": "7d7f7c3e-0000-4000-8000-000000000001",
-                "uploadUrl": format!("{}{}", server.uri(), upload_path),
-                "contentType": "application/zip",
-                "maxBytes": 52428800,
-                "expiresInSeconds": 900
-            }),
-        ))
-        .mount(server)
-        .await;
-    Mock::given(method("PUT"))
-        .and(path(upload_path))
-        .respond_with(ResponseTemplate::new(200))
-        .mount(server)
-        .await;
-    Mock::given(method("POST"))
-        .and(path(format!("{base}/versions/1.0.0/bundle-complete")))
-        .respond_with(erp_ok(200, submission("uploaded")))
-        .mount(server)
-        .await;
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn push_runs_build_when_dist_is_missing() {
-    let server = MockServer::start().await;
-    let env = Env::new(&server);
-    mock_pat(&server).await;
-    mock_times_push(&server, "/upload/build").await;
-    let dir = scaffold(&env).await;
-    std::fs::remove_dir_all(dir.join("dist")).unwrap();
-    std::fs::write(
-        dir.join("package.json"),
-        r#"{"name":"demo-app","scripts":{"build":"node -e \"require('fs').mkdirSync('dist',{recursive:true});require('fs').writeFileSync('dist/index.html','<!doctype html><p>built</p>')\""}}"#,
-    )
-    .unwrap();
-
-    let out = env
-        .run(&dir, &["aip", "push", "--json"], Some("tdk_test"))
-        .await;
-    assert!(
-        out.status.success(),
-        "{}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    assert!(dir.join("dist/index.html").is_file());
-    assert_eq!(stdout_json(&out)["status"], "uploaded");
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn push_skips_when_hash_unchanged() {
-    let server = MockServer::start().await;
-    let env = Env::new(&server);
-    mock_pat(&server).await;
-    mock_times_push(&server, "/upload/skip").await;
-    let dir = scaffold(&env).await;
-
-    let first = env
-        .run(&dir, &["aip", "push", "--json"], Some("tdk_test"))
-        .await;
-    assert!(
-        first.status.success(),
-        "{}",
-        String::from_utf8_lossy(&first.stderr)
-    );
-
-    let second = env
-        .run(&dir, &["aip", "push", "--json"], Some("tdk_test"))
-        .await;
-    assert!(
-        second.status.success(),
-        "{}",
-        String::from_utf8_lossy(&second.stderr)
-    );
-    assert_eq!(stdout_json(&second)["unchanged"], true);
-    let puts = server
-        .received_requests()
-        .await
-        .unwrap()
-        .into_iter()
-        .filter(|r| r.method.as_str() == "PUT")
-        .count();
-    assert_eq!(puts, 1);
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn developer_hosted_push_skips_zip() {
-    let server = MockServer::start().await;
-    let env = Env::new(&server);
-    mock_pat(&server).await;
-    let dir = scaffold(&env).await;
-    let manifest_path = dir.join("times.aip.json");
-    let mut m: Value =
-        serde_json::from_str(&std::fs::read_to_string(&manifest_path).unwrap()).unwrap();
-    m["hosting"] = json!({
-        "provider": "developer",
-        "entryUrl": "https://peachtree.example.com/"
-    });
-    m["ui"]["entry"] = json!("https://peachtree.example.com/");
-    std::fs::write(&manifest_path, serde_json::to_string_pretty(&m).unwrap()).unwrap();
-
-    Mock::given(method("POST"))
-        .and(path("/api/v1/developers/aips/demo-app/versions"))
-        .respond_with(erp_ok(
-            201,
-            json!({
-                "id": "sub-1", "slug": "demo-app", "version": "1.0.0", "status": "uploaded",
-                "scanStatus": "passed", "originVerifiedAt": "2026-10-17T10:00:00Z"
+                "id": "job-remote",
+                "slug": "demo-app",
+                "kind": "build_and_stage",
+                "status": "queued",
+                "trigger_kind": "cli_remote",
+                "git_ref": "main",
+                "attempt": 1
             }),
         ))
         .expect(1)
@@ -997,7 +892,13 @@ async fn developer_hosted_push_skips_zip() {
     let out = env
         .run(
             &dir,
-            &["aip", "push", "--skip-probe", "--json"],
+            &[
+                "aip",
+                "deploy",
+                "--remote",
+                "https://github.com/acme/demo-app",
+                "--json",
+            ],
             Some("tdk_test"),
         )
         .await;
@@ -1006,12 +907,7 @@ async fn developer_hosted_push_skips_zip() {
         "{}",
         String::from_utf8_lossy(&out.stderr)
     );
-    assert_eq!(stdout_json(&out)["status"], "uploaded");
-    let requests = server.received_requests().await.unwrap();
-    assert!(requests.iter().all(|r| r.method.as_str() != "PUT"));
-    assert!(requests
-        .iter()
-        .all(|r| !r.url.path().contains("bundle-upload-url")));
+    assert_eq!(stdout_json(&out)["id"], "job-remote");
 }
 
 #[tokio::test(flavor = "multi_thread")]

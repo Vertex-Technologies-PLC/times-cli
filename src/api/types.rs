@@ -268,19 +268,6 @@ pub struct Listing {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct UploadTicket {
-    pub bundle_id: String,
-    pub upload_url: String,
-    #[serde(default)]
-    pub content_type: Option<String>,
-    #[serde(default)]
-    pub max_bytes: Option<u64>,
-    #[serde(default)]
-    pub expires_in_seconds: Option<u64>,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct SourceUploadTicket {
     pub upload_url: String,
     #[serde(default)]

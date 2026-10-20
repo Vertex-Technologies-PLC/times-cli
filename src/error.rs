@@ -125,9 +125,9 @@ pub fn hint_for(code: &str) -> Option<&'static str> {
         }
         "VERSION_LOCKED" => "This version is locked. Bump the version to push changes.",
         "VERSION_NOT_READY" => {
-            "Push this version first with `times aip push` (TIMES-hosted zip or developer origin)."
+            "Deploy this version first with `times aip deploy`."
         }
-        "VERSION_NOT_FOUND" => "Push this version first with `times aip push`.",
+        "VERSION_NOT_FOUND" => "Deploy this version first with `times aip deploy`.",
         "AIP_IN_REVIEW" | "REVIEW_IN_PROGRESS" => {
             "A version is already in review. Wait for it, or withdraw it with `times aip withdraw`."
         }
@@ -141,7 +141,7 @@ pub fn hint_for(code: &str) -> Option<&'static str> {
             "TIMES cannot store this upload yet. The platform host is missing bundle storage config."
         }
         "DEVELOPER_HOSTING_NO_BUNDLE" => {
-            "This AIP is developer-hosted. Push the origin with `times aip push`, not a zip."
+            "This AIP is developer-hosted. Point hosting.entryUrl at your HTTPS origin, then deploy."
         }
         "AIP_NOT_DELETABLE" => "Published AIPs cannot be deleted.",
         "VALIDATION_FAILED" => "Check the values you passed and try again.",

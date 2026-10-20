@@ -33,7 +33,7 @@ times auth login
 times init my-app
 cd my-app
 times aip create
-times aip push
+times aip deploy
 times aip submit
 ```
 
@@ -66,7 +66,7 @@ Global flags: `--json`, `--org <slug>`, `--api-url <url>`, `--profile <name>`, `
 Create a token with `times token create --name ci --scopes aips:read,aips:write,aips:submit`, then set it as `TIMES_TOKEN`. The CLI exchanges it for a short lived access token on every run.
 
 ```sh
-TIMES_TOKEN=tdk_... times aip push --no-input
+TIMES_TOKEN=tdk_... times aip deploy --follow --no-input
 ```
 
 ## Environment
