@@ -436,7 +436,7 @@ pub enum TokenCmd {
         #[arg(
             long,
             value_delimiter = ',',
-            default_value = "aips:read,aips:write,aips:submit,stats:read"
+            default_value = "aips:read,aips:write,aips:submit,stats:read,depot:read,depot:deploy,depot:repos"
         )]
         scopes: Vec<String>,
         /// Lifetime like 30d, 90d or 365d. Use `never` for no expiry

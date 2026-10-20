@@ -16,6 +16,9 @@ const DEV_SCOPES: &[&str] = &[
     "payouts:write",
     "webhooks:write",
     "org:read",
+    "depot:read",
+    "depot:deploy",
+    "depot:repos",
 ];
 
 pub async fn run(ctx: &mut Ctx, cmd: TokenCmd) -> anyhow::Result<()> {
