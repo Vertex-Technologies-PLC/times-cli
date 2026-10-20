@@ -21,6 +21,7 @@ pub struct Bundle {
     pub bytes: Vec<u8>,
     pub sha256: String,
     pub files: Vec<String>,
+    pub vendored_packages: Vec<String>,
 }
 
 fn archive_name(root: &Path, path: &Path) -> anyhow::Result<String> {
@@ -123,12 +124,11 @@ pub fn pack(root: &Path, manifest: &Value, dir: Option<&str>) -> anyhow::Result<
 
 pub fn pack_source(root: &Path) -> anyhow::Result<Bundle> {
     let root = root.canonicalize()?;
-    let mut files = BTreeMap::new();
-    add_dir(&root, &root, &mut files)?;
-    if files.is_empty() {
-        return Err(CliError::usage("Nothing to zip in this folder.").into());
-    }
-    zip_files(files)
+    let staged = crate::workspace_pack::stage_for_deploy(&root)?;
+    let files = crate::workspace_pack::collect_staged_files(&staged.staged_root)?;
+    let mut bundle = zip_files(files)?;
+    bundle.vendored_packages = staged.vendored_packages;
+    Ok(bundle)
 }
 
 pub fn zip_files(files: BTreeMap<String, PathBuf>) -> anyhow::Result<Bundle> {
@@ -152,6 +152,7 @@ pub fn zip_files(files: BTreeMap<String, PathBuf>) -> anyhow::Result<Bundle> {
         bytes,
         sha256,
         files: files.into_keys().collect(),
+        vendored_packages: Vec::new(),
     })
 }
 

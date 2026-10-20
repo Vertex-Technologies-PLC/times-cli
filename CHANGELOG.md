@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.13
+
+- `times aip deploy` vendors `workspace:` dependencies (for example `@times/aip-sdk`) into `vendor/`, drops stale bun/pnpm locks, and regenerates `package-lock.json` before upload so depot can `npm ci` without a monorepo.
+- Shellenv always puts the install bin dir first on `PATH`, so `~/.local/bin/times` wins over `~/.cargo/bin/times`.
+- `times upgrade` rewrites shellenv on every upgrade so that PATH fix applies immediately.
+- Static `times init` scaffolds ship palette `themes.css` and sync guest preferences from the runtime API.
+
 ## 0.4.12
 
 - `times upgrade` installs quietly and no longer asks you to source shellenv or open a new terminal. Shell config is still written automatically.

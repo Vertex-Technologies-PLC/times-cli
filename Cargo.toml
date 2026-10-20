@@ -1,6 +1,6 @@
 [package]
 name = "times"
-version = "0.4.12"
+version = "0.4.13"
 edition = "2021"
 rust-version = "1.80"
 description = "Command line tool for building and publishing TIMES AIPs"
@@ -29,6 +29,7 @@ semver = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 sha2 = "0.10"
+tempfile = "3"
 thiserror = "2"
 tiny_http = "0.12"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "signal", "fs"] }

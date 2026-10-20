@@ -16,6 +16,7 @@ mod shell;
 mod templates;
 mod ui;
 mod update;
+mod workspace_pack;
 
 use clap::Parser;
 use console::style;

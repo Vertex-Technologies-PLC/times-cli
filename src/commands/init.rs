@@ -466,6 +466,36 @@ p {
 }
 "#;
 
+// Static scaffolds ship source as the build. Keep palette ids in sync with
+// built_css_palette_checks in manifest/mod.rs. Bundler scaffolds use the SDK CSS.
+const STATIC_THEMES_CSS: &str = r#":root {
+  --background: #ffffff;
+  --foreground: #111111;
+  --muted-foreground: #5c5c5c;
+  --font-sans: system-ui, sans-serif;
+}
+
+html[data-theme='claude'],
+html[data-theme='discord'],
+html[data-theme='supabase'],
+html[data-theme='vercel'],
+html[data-theme='mono'],
+html[data-theme='notebook'],
+html[data-theme='light-green'],
+html[data-theme='zen'],
+html[data-theme='astro-vista'],
+html[data-theme='whatsapp'] {
+  color-scheme: light;
+}
+
+html.dark {
+  color-scheme: dark;
+  --background: #111111;
+  --foreground: #f5f5f5;
+  --muted-foreground: #a3a3a3;
+}
+"#;
+
 const VITE_CONFIG: &str = r#"import { defineConfig } from 'vite';
 
 export default defineConfig({
@@ -489,6 +519,7 @@ const TSCONFIG_VITE: &str = r#"{
 "#;
 
 const STATIC_JS: &str = r#"const PARENT_ORIGIN = 'https://app.times.et';
+const API_BASE = 'https://api.times.et';
 
 function lookup(messages, key) {
   return key.split('.').reduce((node, part) => (node ? node[part] : undefined), messages) ?? key;
@@ -507,6 +538,10 @@ function paintHeld() {
   } else if (held.colorMode === 'light') {
     root.classList.remove('dark');
     root.style.colorScheme = 'light';
+  } else if (held.colorMode === 'system') {
+    const dark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+    root.classList.toggle('dark', dark);
+    root.style.colorScheme = dark ? 'dark' : 'light';
   }
   if (held.locale && root.lang !== held.locale) root.lang = held.locale;
 }
@@ -515,13 +550,29 @@ function holdPrefs(next) {
   const theme =
     typeof next.themeId === 'string' ? next.themeId : typeof next.theme === 'string' ? next.theme : '';
   if (theme && /^[a-z0-9-]+$/.test(theme)) held.theme = theme;
-  if (next.colorMode === 'dark' || next.colorMode === 'light') held.colorMode = next.colorMode;
+  if (next.colorMode === 'dark' || next.colorMode === 'light' || next.colorMode === 'system') {
+    held.colorMode = next.colorMode;
+  }
   if (typeof next.locale === 'string' && /^(en|am|om|ti)$/.test(next.locale)) held.locale = next.locale;
   paintHeld();
 }
 
+async function syncPreferencesFromApi() {
+  try {
+    const res = await fetch(`${API_BASE}/api/v1/apps/runtime/v1/preferences`, {
+      credentials: 'include'
+    });
+    if (!res.ok) return;
+    const data = await res.json();
+    holdPrefs(data?.data ?? data ?? {});
+  } catch (_) {
+    /* guest may be offline or unsigned */
+  }
+}
+
 const boot = new URLSearchParams(location.search);
 holdPrefs({ theme: boot.get('theme'), colorMode: boot.get('colorMode'), locale: boot.get('locale') });
+void syncPreferencesFromApi();
 new MutationObserver(paintHeld).observe(document.documentElement, {
   attributes: true,
   attributeFilter: ['data-theme', 'class', 'lang']
@@ -745,11 +796,7 @@ pub fn scaffold(o: &Options) -> Vec<(String, String)> {
             ));
             files.push(("app.js".into(), STATIC_JS.into()));
             files.push(("style.css".into(), STYLE_CSS.into()));
-            files.push((
-                "themes.css".into(),
-                "html { background: var(--background, #fff); color: var(--foreground, #111); }\n"
-                    .into(),
-            ));
+            files.push(("themes.css".into(), STATIC_THEMES_CSS.into()));
         }
         Framework::Next => {
             let pkg = json!({

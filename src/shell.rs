@@ -17,10 +17,25 @@ pub struct SetupReport {
 
 pub fn shellenv_body(bin_dirs: &[PathBuf]) -> String {
     let mut out = String::from("# TIMES CLI. Prefer this binary over the POSIX `times` builtin.\n");
+    // Always move each bin dir to the front, even if it already appears later in PATH
+    // (e.g. ~/.cargo/bin/times must not win over ~/.local/bin/times).
     for dir in bin_dirs {
         let dir = dir.display();
         out.push_str(&format!(
-            "case \":${{PATH}}:\" in\n  *\":{dir}:\"*) ;;\n  *) PATH=\"{dir}:${{PATH}}\" ;;\nesac\n"
+            "_times_path=\"\"\n\
+_times_IFS=\"$IFS\"\n\
+IFS=:\n\
+for _times_p in $PATH; do\n\
+  [ \"$_times_p\" = \"{dir}\" ] && continue\n\
+  if [ -z \"$_times_path\" ]; then\n\
+    _times_path=\"$_times_p\"\n\
+  else\n\
+    _times_path=\"$_times_path:$_times_p\"\n\
+  fi\n\
+done\n\
+IFS=\"$_times_IFS\"\n\
+PATH=\"{dir}${{_times_path:+:$_times_path}}\"\n\
+unset _times_path _times_IFS _times_p\n"
         ));
     }
     if !bin_dirs.is_empty() {
@@ -190,6 +205,7 @@ mod tests {
         assert!(body.contains("disable times"));
         assert!(body.contains("enable -n times"));
         assert!(body.contains("/tmp/times-bin"));
+        assert!(body.contains("PATH=\"/tmp/times-bin${_times_path:+:$_times_path}\""));
     }
 
     #[test]

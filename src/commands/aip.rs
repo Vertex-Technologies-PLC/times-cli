@@ -290,6 +290,12 @@ async fn deploy(
         let pack_spin = ctx.out.spinner("Packing source…");
         let packed = bundle::pack_source(&root)?;
         pack_spin.finish_and_clear();
+        if !ctx.out.json && !packed.vendored_packages.is_empty() {
+            ctx.out.info(format!(
+                "  Vendored {} for the depot build.",
+                packed.vendored_packages.join(", ")
+            ));
+        }
         let size = packed.bytes.len() as u64;
         if size > MAX_BUNDLE_BYTES {
             return Err(CliError::validation(format!(
@@ -799,6 +805,12 @@ async fn scan_remote(ctx: &mut Ctx, loaded: &Loaded, follow: bool) -> anyhow::Re
             packed.files.len(),
             human_size(size)
         ));
+        if !packed.vendored_packages.is_empty() {
+            ctx.out.info(format!(
+                "  Vendored {} for the depot build.",
+                packed.vendored_packages.join(", ")
+            ));
+        }
         ctx.out.step(2, 3, "Uploading source to depot");
     }
     let source_sha = packed.sha256.clone();

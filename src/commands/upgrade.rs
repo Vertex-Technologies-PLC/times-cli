@@ -61,7 +61,9 @@ fn ensure_shell_after_upgrade() -> bool {
     let Ok(config_dir) = crate::config::config_dir() else {
         return false;
     };
-    matches!(crate::shell::ensure(&config_dir), Ok(Some(_)))
+    // Always rewrite shellenv so PATH priority fixes ship on upgrade, not only
+    // the first install.
+    crate::shell::apply(&config_dir, &crate::shell::default_bin_dirs()).is_ok()
 }
 
 fn run_installer() -> anyhow::Result<()> {
