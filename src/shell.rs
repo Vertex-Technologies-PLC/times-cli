@@ -48,16 +48,18 @@ unset _times_path _times_IFS _times_p\n"
 }
 
 pub fn default_bin_dirs() -> Vec<PathBuf> {
+    // Each dir is prepended in order; the last entry wins PATH. Put
+    // ~/.local/bin last so the installer binary beats ~/.cargo/bin/times.
     let mut dirs = Vec::new();
-    if let Some(home) = home_dir() {
-        dirs.push(home.join(".local").join("bin"));
-    }
     if let Ok(exe) = env::current_exe() {
         if let Some(parent) = exe.parent() {
-            if !dirs.iter().any(|d| d == parent) {
-                dirs.push(parent.to_path_buf());
-            }
+            dirs.push(parent.to_path_buf());
         }
+    }
+    if let Some(home) = home_dir() {
+        let local = home.join(".local").join("bin");
+        dirs.retain(|d| d != &local);
+        dirs.push(local);
     }
     dirs
 }
@@ -206,6 +208,16 @@ mod tests {
         assert!(body.contains("enable -n times"));
         assert!(body.contains("/tmp/times-bin"));
         assert!(body.contains("PATH=\"/tmp/times-bin${_times_path:+:$_times_path}\""));
+    }
+
+    #[test]
+    fn local_bin_is_last_so_it_wins_path() {
+        let dirs = default_bin_dirs();
+        let local = home_dir()
+            .expect("home")
+            .join(".local")
+            .join("bin");
+        assert_eq!(dirs.last(), Some(&local));
     }
 
     #[test]

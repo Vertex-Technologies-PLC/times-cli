@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.14
+
+- `times upgrade` and `install.sh` print progress while downloading and installing (no more silent hang).
+- Shellenv puts `~/.local/bin` last in the prepend list so it always wins over `~/.cargo/bin/times`.
+- Deploy pack skips `.env*` files, drops `yarn.lock` when regenerating locks, and requires vendored packages to include `dist/`.
+
 ## 0.4.13
 
 - `times aip deploy` vendors `workspace:` dependencies (for example `@times/aip-sdk`) into `vendor/`, drops stale bun/pnpm locks, and regenerates `package-lock.json` before upload so depot can `npm ci` without a monorepo.

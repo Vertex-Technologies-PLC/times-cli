@@ -1,4 +1,6 @@
-use std::process::Command;
+use std::io::{BufRead, BufReader};
+use std::process::{Command, Stdio};
+use std::thread;
 
 use anyhow::Context;
 use serde_json::json;
@@ -32,7 +34,10 @@ pub async fn run(out: &Output) -> anyhow::Result<()> {
         out.info("Could not check GitHub for the latest version. Running the installer anyway.");
     }
 
-    run_installer()?;
+    if !out.json {
+        out.info("Downloading and installing (this can take a minute)…");
+    }
+    run_installer(out)?;
     let _ = ensure_shell_after_upgrade();
 
     if out.json {
@@ -51,6 +56,7 @@ pub async fn run(out: &Output) -> anyhow::Result<()> {
             .unwrap_or_else(|| "latest".into())
     ));
     out.info(format!("Changelog: {CHANGELOG_URL}"));
+    out.info("If this shell still shows the old version, run: . ~/.config/times/shellenv");
     Ok(())
 }
 
@@ -66,7 +72,7 @@ fn ensure_shell_after_upgrade() -> bool {
     crate::shell::apply(&config_dir, &crate::shell::default_bin_dirs()).is_ok()
 }
 
-fn run_installer() -> anyhow::Result<()> {
+fn run_installer(out: &Output) -> anyhow::Result<()> {
     let status = if cfg!(windows) {
         Command::new("powershell")
             .args([
@@ -77,13 +83,45 @@ fn run_installer() -> anyhow::Result<()> {
             .status()
             .context("Could not start PowerShell to run the times installer")?
     } else {
+        // QUIET=1 only skips the final `times --version` line. Progress steps
+        // from install.sh still stream so upgrade does not look hung.
         let script = format!("curl -fsSL {INSTALL_SH} | sh");
-        Command::new("sh")
+        let mut child = Command::new("sh")
             .arg("-c")
             .arg(&script)
             .env("TIMES_INSTALL_QUIET", "1")
-            .status()
-            .context("Could not start sh to run the times installer")?
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .context("Could not start sh to run the times installer")?;
+
+        let stdout = child.stdout.take();
+        let stderr = child.stderr.take();
+        let show = !out.json;
+        let out_thread = thread::spawn(move || {
+            if let Some(pipe) = stdout {
+                for line in BufReader::new(pipe).lines().map_while(Result::ok) {
+                    if show {
+                        eprintln!("{line}");
+                    }
+                }
+            }
+        });
+        let err_thread = thread::spawn(move || {
+            if let Some(pipe) = stderr {
+                for line in BufReader::new(pipe).lines().map_while(Result::ok) {
+                    if show {
+                        eprintln!("{line}");
+                    }
+                }
+            }
+        });
+        let status = child
+            .wait()
+            .context("Could not wait for the times installer")?;
+        let _ = out_thread.join();
+        let _ = err_thread.join();
+        status
     };
     if !status.success() {
         return Err(CliError::network(format!(

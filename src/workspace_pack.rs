@@ -123,6 +123,7 @@ fn regenerate_npm_lockfile(staged: &Path) -> anyhow::Result<()> {
         "bun.lock",
         "bun.lockb",
         "pnpm-lock.yaml",
+        "yarn.lock",
     ] {
         let path = staged.join(name);
         if path.is_file() {
@@ -221,12 +222,13 @@ fn copy_npm_package(source: &Path, dest: &Path) -> anyhow::Result<()> {
                 .collect()
         })
         .unwrap_or_default();
-    if entries.is_empty() {
+    let defaulted_to_dist = entries.is_empty();
+    if defaulted_to_dist {
         entries.push("dist".into());
     }
-    for entry in entries {
-        let from = source.join(&entry);
-        let to = dest.join(&entry);
+    for entry in &entries {
+        let from = source.join(entry);
+        let to = dest.join(entry);
         if from.is_dir() {
             copy_tree(&from, &to)?;
         } else if from.is_file() {
@@ -236,6 +238,16 @@ fn copy_npm_package(source: &Path, dest: &Path) -> anyhow::Result<()> {
             fs::copy(&from, &to)
                 .with_context(|| format!("Could not copy {}", from.display()))?;
         }
+    }
+    if defaulted_to_dist && !dest.join("dist").exists() {
+        let name = pkg
+            .get("name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("package");
+        return Err(CliError::usage(format!(
+            "vendored {name} has no dist/ folder. Build it (e.g. npm run build in times-aip-sdk) before deploy."
+        ))
+        .into());
     }
 
     // Keep package.json exports that point at root CSS files even if omitted from "files".
@@ -282,6 +294,10 @@ fn copy_if_file(source: &Path, dest: &Path, rel: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn is_env_secret_name(name: &str) -> bool {
+    name == ".env" || name.starts_with(".env.")
+}
+
 fn copy_tree(from: &Path, to: &Path) -> anyhow::Result<()> {
     fs::create_dir_all(to)?;
     for entry in walkdir::WalkDir::new(from)
@@ -297,6 +313,10 @@ fn copy_tree(from: &Path, to: &Path) -> anyhow::Result<()> {
     {
         let entry = entry?;
         if !entry.file_type().is_file() {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy();
+        if is_env_secret_name(&name) {
             continue;
         }
         let rel = entry.path().strip_prefix(from)?;
@@ -400,5 +420,34 @@ mod tests {
         let staged = stage_for_deploy(root).expect("stage");
         assert!(staged.vendored_packages.is_empty());
         assert!(staged.staged_root.join("package-lock.json").is_file());
+    }
+
+    #[test]
+    fn pack_skips_dotenv_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        fs::write(root.join("package.json"), r#"{"name":"demo"}"#).unwrap();
+        fs::write(root.join(".env"), "SECRET=1\n").unwrap();
+        fs::write(root.join(".env.local"), "SECRET=2\n").unwrap();
+        fs::write(root.join("readme.md"), "ok\n").unwrap();
+        let staged = stage_for_deploy(root).expect("stage");
+        assert!(!staged.staged_root.join(".env").exists());
+        assert!(!staged.staged_root.join(".env.local").exists());
+        assert!(staged.staged_root.join("readme.md").is_file());
+    }
+
+    #[test]
+    fn vendor_requires_dist_when_files_omitted() {
+        let dir = tempfile::tempdir().unwrap();
+        let sdk = dir.path().join("sdk");
+        fs::create_dir_all(&sdk).unwrap();
+        fs::write(
+            sdk.join("package.json"),
+            r#"{"name":"@times/aip-sdk","version":"0.0.0"}"#,
+        )
+        .unwrap();
+        let err = copy_npm_package(&sdk, &dir.path().join("out")).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(msg.contains("no dist/"), "{msg}");
     }
 }
