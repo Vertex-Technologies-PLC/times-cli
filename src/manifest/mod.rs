@@ -1,4 +1,5 @@
 pub mod bump;
+pub mod scopes;
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -13,44 +14,6 @@ use crate::error::CliError;
 pub const MANIFEST_FILE: &str = "times.aip.json";
 pub const LOCALES: [&str; 4] = ["en", "am", "om", "ti"];
 pub const SCHEMA_JSON: &str = include_str!("times.aip.schema.json");
-
-pub const ALLOWED_SCOPES: &[&str] = &[
-    "company:read",
-    "company:write",
-    "users:read",
-    "users:write",
-    "invoices:read",
-    "invoices:write",
-    "products:read",
-    "products:write",
-    "inventory:read",
-    "inventory:write",
-    "buyers:read",
-    "buyers:write",
-    "files:read",
-    "files:write",
-    "events:subscribe",
-    "ui:overlay",
-    "ui:notify",
-    "state:read",
-    "state:write",
-    "tickets:read",
-    "tickets:write",
-    "tickets:admin",
-    "hr:read",
-    "hr:write",
-    "hr:admin",
-    "hr:self",
-    "payroll:read",
-    "payroll:write",
-    "payroll:admin",
-    "lender:read",
-    "lender:write",
-    "lender:admin",
-    "device:camera",
-    "device:clipboard-read",
-    "device:clipboard-write",
-];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -256,7 +219,7 @@ fn scope_checks(m: &Value, _: Option<&Path>, r: &mut Report) {
         {
             for (i, s) in list.iter().enumerate() {
                 if let Some(s) = s.as_str() {
-                    if !ALLOWED_SCOPES.contains(&s) {
+                    if !scopes::allows(s) {
                         r.error(
                             format!("/scopes/{group}/{i}"),
                             format!("Unknown scope `{s}`."),

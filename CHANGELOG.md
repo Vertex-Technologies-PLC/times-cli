@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.24
+
+- `times manifest validate` and `times aip deploy` load allowed scopes from `GET /api/v1/apps/catalog/public/scopes` and cache them. A scope published on the gateway is accepted without a new CLI build.
+
 ## 0.4.23
 
 - Allow `device:camera`, `device:clipboard-read`, and `device:clipboard-write` in AIP manifests.

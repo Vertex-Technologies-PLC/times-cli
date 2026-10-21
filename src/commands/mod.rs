@@ -26,17 +26,35 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         Command::Completions(args) => completions::run(args),
         Command::SetupShell(args) => setup_shell::run(&out, args),
         Command::Upgrade => upgrade::run(&out).await,
-        Command::Init(args) => init::run(&out, args).await,
-        Command::Manifest(cmd) => manifest::run(&out, cmd),
-        Command::Dev(args) => dev::run(&out, args).await,
+        Command::Init(args) => {
+            refresh_scopes(&g).await;
+            init::run(&out, args).await
+        }
+        Command::Manifest(cmd) => {
+            refresh_scopes(&g).await;
+            manifest::run(&out, cmd)
+        }
+        Command::Dev(args) => {
+            refresh_scopes(&g).await;
+            dev::run(&out, args).await
+        }
         Command::Auth(cmd) => auth::run(&mut session(g, out)?, cmd).await,
         Command::Org(cmd) => org::run(&mut session(g, out)?, cmd).await,
-        Command::Aip(cmd) => aip::run(&mut session(g, out)?, cmd).await,
+        Command::Aip(cmd) => {
+            refresh_scopes(&g).await;
+            aip::run(&mut session(g, out)?, cmd).await
+        }
         Command::Stats(args) => stats::run(&mut session(g, out)?, args).await,
         Command::Earnings(args) => money::earnings(&mut session(g, out)?, args).await,
         Command::Payout(cmd) => money::payout(&mut session(g, out)?, cmd).await,
         Command::Token(cmd) => tokens::run(&mut session(g, out)?, cmd).await,
     }
+}
+
+async fn refresh_scopes(g: &GlobalArgs) {
+    let base =
+        crate::manifest::scopes::api_base_from_flag(g.api_url.as_deref(), g.profile.as_deref());
+    crate::manifest::scopes::refresh(&base).await;
 }
 
 fn session(g: GlobalArgs, out: Output) -> anyhow::Result<Ctx> {
