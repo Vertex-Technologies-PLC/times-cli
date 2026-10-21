@@ -325,6 +325,11 @@ pub enum AipCmd {
         #[arg(long, env = "TIMES_DEPLOY_VERBOSE")]
         verbose: bool,
     },
+    /// Cancel a queued or running depot job
+    Cancel {
+        /// Depot job ID
+        id: String,
+    },
     /// Check auth, manifest, hosting and listing
     Doctor,
     /// Delete a draft AIP that was never published

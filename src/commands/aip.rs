@@ -45,6 +45,7 @@ pub async fn run(ctx: &mut Ctx, cmd: AipCmd) -> anyhow::Result<()> {
             follow,
             verbose,
         } => retry_job(ctx, id, follow, verbose).await,
+        AipCmd::Cancel { id } => cancel_job(ctx, id).await,
         AipCmd::Doctor => doctor(ctx).await,
         AipCmd::Delete { slug } => delete_aip(ctx, slug).await,
         AipCmd::Open { slug } => open_aip(ctx, slug).await,
@@ -414,12 +415,13 @@ fn job_status_label(status: &str) -> &'static str {
     match status {
         "queued" => "Queued",
         "claimed" => "Claimed",
-        "cloning" => "Fetching source",
-        "scanning_source" => "Scanning source",
+        "cloning" => "Checkout",
+        "scanning_source" | "scanning_policy" => "AIP policy",
+        "scanning_security" => "Security scan",
         "building" => "Building",
         "packing" => "Packing",
-        "scanning_bundle" => "Scanning bundle",
-        "staging" => "Staging",
+        "scanning_bundle" => "Bundle policy",
+        "staging" => "Staging CDN",
         "finalizing" => "Finalizing",
         "succeeded" => "Succeeded",
         "failed" => "Failed",
@@ -486,6 +488,9 @@ async fn follow_job(
             spinner.finish_and_clear();
             if !ctx.out.json {
                 ctx.out.status_line(&job.status);
+                if let Some(hit) = quiet_tail.iter().rev().find_map(|l| cache_hit_label(l)) {
+                    ctx.out.info(format!("Build cache: {hit}"));
+                }
                 if job.status != "succeeded" && !verbose {
                     if let Some(err) = job.error_message.as_deref().filter(|s| !s.is_empty()) {
                         ctx.out.warn(err.to_string());
@@ -543,6 +548,17 @@ fn keep_quiet_log_line(text: &str) -> bool {
         return false;
     }
     true
+}
+
+fn cache_hit_label(text: &str) -> Option<&'static str> {
+    let t = text.trim();
+    let rest = t.strip_prefix("builder: cache_hit=")?;
+    Some(match rest.trim() {
+        "nm" => "node_modules hit",
+        "store" => "registry store hit",
+        "miss" => "miss",
+        _ => "hit",
+    })
 }
 
 fn quiet_failure_tail(lines: &[String], max: usize) -> Vec<String> {
@@ -911,6 +927,23 @@ async fn scan_remote(
     }
     ctx.out
         .success("Depot scan passed. Human review is still required before publish.");
+    Ok(())
+}
+
+async fn cancel_job(ctx: &mut Ctx, id: String) -> anyhow::Result<()> {
+    let token = ctx.erp_token().await?;
+    let job: DepotJob = ctx
+        .client
+        .post(
+            &format!("/api/v1/depot/jobs/{}/cancel", seg(&id)),
+            Some(&token),
+            &json!({}),
+        )
+        .await?;
+    if ctx.out.json {
+        return ctx.out.json(&job);
+    }
+    ctx.out.success(format!("Cancelled job {} ({})", job.id, job.status));
     Ok(())
 }
 
