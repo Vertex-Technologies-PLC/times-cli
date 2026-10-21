@@ -11,11 +11,13 @@ use crate::bundle::{self, human_size, MAX_BUNDLE_BYTES};
 use crate::cli::{AipCmd, ListingCmd, OriginCmd};
 use crate::context::Ctx;
 use crate::error::CliError;
+use super::create_handshake::{CreateHandshake, Identity, LocalCreateServer};
 use crate::hosting;
 use crate::manifest::{self, str_at, Loaded};
 use crate::ui::{or_dash, short_date};
 
 const DEVELOPERS_ORIGIN: &str = "https://developers.times.et";
+const CREATE_BROWSER_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 
 pub async fn run(ctx: &mut Ctx, cmd: AipCmd) -> anyhow::Result<()> {
     match cmd {
@@ -141,22 +143,133 @@ async fn list(ctx: &mut Ctx) -> anyhow::Result<()> {
 
 async fn create(ctx: &mut Ctx) -> anyhow::Result<()> {
     let loaded = load_manifest()?;
-    let m = &loaded.value;
-    let slug =
-        str_at(m, "/slug").ok_or_else(|| CliError::validation("times.aip.json has no slug."))?;
-    let kind =
-        str_at(m, "/kind").ok_or_else(|| CliError::validation("times.aip.json has no kind."))?;
+    let defaults = identity_from_manifest(&loaded.value)?;
+
+    if !ctx.out.interactive {
+        return create_via_api(ctx, &loaded, defaults).await;
+    }
+
+    let choice = ctx.out.select(
+        "How do you want to configure this AIP?",
+        vec![
+            "In the browser (developers portal)".into(),
+            "In this terminal".into(),
+        ],
+    )?;
+
+    match choice {
+        0 => create_via_browser(ctx, &loaded, defaults).await,
+        _ => {
+            let identity = prompt_identity(ctx, &defaults)?;
+            apply_identity(&loaded, &identity)?;
+            create_via_api(ctx, &loaded, identity).await
+        }
+    }
+}
+
+fn identity_from_manifest(m: &Value) -> anyhow::Result<Identity> {
+    let slug = str_at(m, "/slug")
+        .ok_or_else(|| CliError::validation("times.aip.json has no slug."))?
+        .to_string();
+    let kind = str_at(m, "/kind")
+        .ok_or_else(|| CliError::validation("times.aip.json has no kind."))?
+        .to_string();
+    let name = str_at(m, "/name")
+        .map(str::to_string)
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| slug.clone());
+    let mode = str_at(m, "/mode")
+        .map(str::to_string)
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "platform".into());
+    Ok(Identity {
+        name,
+        slug,
+        kind,
+        mode,
+    })
+}
+
+fn prompt_identity(ctx: &Ctx, defaults: &Identity) -> anyhow::Result<Identity> {
+    let name = ctx.out.text("Display name", &defaults.name)?;
+    if name.trim().is_empty() {
+        return Err(CliError::validation("Display name is required.").into());
+    }
+    let slug_default = if defaults.slug.is_empty() {
+        crate::commands::init::slugify(&name)
+    } else {
+        defaults.slug.clone()
+    };
+    let slug = ctx.out.text("Slug (permanent)", &slug_default)?;
+    if !is_valid_create_slug(&slug) {
+        return Err(CliError::validation(
+            "Slug must be lowercase letters, numbers, and hyphens (3–64 characters).",
+        )
+        .into());
+    }
+
+    let kinds = vec!["app".into(), "integration".into(), "pack".into()];
+    let kind_idx = ctx.out.select("Kind", kinds.clone())?;
+    let kind = kinds[kind_idx].clone();
+
+    let mode = if kind == "pack" {
+        "platform".into()
+    } else {
+        let modes = vec!["platform".into(), "runtime".into()];
+        let mode_idx = ctx.out.select("Mode", modes.clone())?;
+        modes[mode_idx].clone()
+    };
+
+    Ok(Identity {
+        name: name.trim().to_string(),
+        slug: slug.trim().to_string(),
+        kind,
+        mode,
+    })
+}
+
+fn is_valid_create_slug(s: &str) -> bool {
+    let len = s.len();
+    (3..=64).contains(&len)
+        && s.split('-').all(|p| {
+            !p.is_empty()
+                && p.chars()
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
+        })
+}
+
+fn apply_identity(loaded: &Loaded, identity: &Identity) -> anyhow::Result<()> {
+    let mut value = loaded.value.clone();
+    value["name"] = json!(identity.name);
+    value["slug"] = json!(identity.slug);
+    value["kind"] = json!(identity.kind);
+    value["mode"] = json!(identity.mode);
+    manifest::save(&loaded.path, &value)?;
+    Ok(())
+}
+
+async fn create_via_api(
+    ctx: &mut Ctx,
+    loaded: &Loaded,
+    identity: Identity,
+) -> anyhow::Result<()> {
     let body = json!({
-        "slug": slug,
-        "kind": kind,
-        "mode": str_at(m, "/mode"),
-        "name": str_at(m, "/name"),
+        "slug": identity.slug,
+        "kind": identity.kind,
+        "mode": identity.mode,
+        "name": identity.name,
     });
     let token = ctx.erp_token().await?;
     let aip: Aip = ctx
         .client
         .post("/api/v1/developers/aips", Some(&token), &body)
         .await?;
+    apply_identity(loaded, &Identity {
+        name: aip.name.clone().unwrap_or(identity.name),
+        slug: aip.slug.clone(),
+        kind: aip.kind.clone(),
+        mode: aip.mode.clone().unwrap_or(identity.mode),
+    })?;
     if ctx.out.json {
         return ctx.out.json(&aip);
     }
@@ -164,6 +277,47 @@ async fn create(ctx: &mut Ctx) -> anyhow::Result<()> {
         .success(format!("Created {} ({}).", aip.slug, aip.kind));
     ctx.out.info("Next: run `times aip deploy`.");
     Ok(())
+}
+
+async fn create_via_browser(
+    ctx: &mut Ctx,
+    loaded: &Loaded,
+    defaults: Identity,
+) -> anyhow::Result<()> {
+    let server = LocalCreateServer::bind()?;
+    let url = server.portal_url(&defaults)?;
+    if ctx.out.json {
+        return ctx.out.json(&json!({
+            "url": url,
+            "port": server.port,
+            "message": "Open the URL, create or cancel in the browser, then this command will finish."
+        }));
+    }
+
+    ctx.out.info(format!("Open {url}"));
+    match open::that(&url) {
+        Ok(()) => ctx.out.info("Opened the developers portal in your browser."),
+        Err(_) => ctx.out.warn("Could not open a browser. Open the URL above yourself."),
+    }
+    ctx.out
+        .info("Waiting for create or cancel in the browser (Ctrl+C to abort)…");
+
+    let spinner = ctx.out.spinner("Waiting for the developers portal…");
+    let result = server.wait(CREATE_BROWSER_TIMEOUT).await;
+    spinner.finish_and_clear();
+    let result = result?;
+
+    match result {
+        CreateHandshake::Cancelled => Err(CliError::usage("Cancelled.").into()),
+        CreateHandshake::Created(identity) => {
+            apply_identity(loaded, &identity)?;
+            ctx.out
+                .success(format!("Created {} ({}).", identity.slug, identity.kind));
+            ctx.out.info("Updated times.aip.json to match.");
+            ctx.out.info("Next: run `times aip deploy`.");
+            Ok(())
+        }
+    }
 }
 
 async fn info(ctx: &mut Ctx, slug: Option<String>) -> anyhow::Result<()> {

@@ -1,6 +1,7 @@
 mod aip;
 mod auth;
 mod completions;
+mod create_handshake;
 mod dev;
 mod init;
 mod manifest;

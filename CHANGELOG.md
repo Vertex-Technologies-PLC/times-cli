@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.21
+
+- `times aip create` asks whether to configure in the browser or the terminal. Browser opens the developers portal and waits for create or cancel. Terminal prompts for name, slug, kind, and mode.
+
 ## 0.4.20
 
 - `times aip deploy` / `scan --remote` / `retry` show a step counter with percentage (`[3/8 · 38%] Building`) while following depot jobs.
