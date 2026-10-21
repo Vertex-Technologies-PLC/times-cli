@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.19
+
+- `times aip cancel <job-id>` cancels an in-flight depot job.
+- Deploy follow shows pipeline stage labels (`scanning_policy`, `scanning_security`, …) and prints a cache hit line when the builder restores `node_modules` or the registry store.
+
 ## 0.4.18
 
 - Deploy source packs skip local build junk: `.next`, `out`, `dist`, `build`, caches (`.turbo`, `.vercel`, `.cache`, …), coverage, IDE folders, `.env*`, and `*.tsbuildinfo`. Nested `vendor/*/dist` is still packed.
