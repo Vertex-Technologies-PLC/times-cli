@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.26
+
+- Browser `times aip create` handshake shows a polished success or cancel page (name, slug, and a clear return-to-terminal hint).
+
 ## 0.4.25
 
 - Guest catalogs must define plain `meta.name`, `meta.summary`, and `meta.description` (all locales). Terminal `times aip create` listing prompts default from English guest meta.
