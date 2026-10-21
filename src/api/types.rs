@@ -292,6 +292,40 @@ pub struct DepotJob {
     pub error_message: Option<String>,
     #[serde(default)]
     pub attempt: Option<i32>,
+    #[serde(default)]
+    pub steps: Vec<DepotJobStep>,
+    #[serde(default)]
+    pub progress: Option<DepotJobProgress>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+pub struct DepotJobStep {
+    #[serde(default)]
+    pub id: Option<String>,
+    #[serde(default)]
+    pub stage: Option<String>,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub position: Option<i32>,
+    #[serde(default)]
+    pub status: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+pub struct DepotJobProgress {
+    #[serde(default)]
+    pub current: i32,
+    #[serde(default)]
+    pub total: i32,
+    #[serde(default)]
+    pub percent: i32,
+    #[serde(default)]
+    pub stage: Option<String>,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub status: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

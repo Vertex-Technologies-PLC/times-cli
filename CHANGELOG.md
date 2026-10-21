@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.20
+
+- `times aip deploy` / `scan --remote` / `retry` show a step counter with percentage (`[3/8 · 38%] Building`) while following depot jobs.
+
 ## 0.4.19
 
 - `times aip cancel <job-id>` cancels an in-flight depot job.

@@ -438,9 +438,10 @@ async fn follow_job(
     verbose: bool,
 ) -> anyhow::Result<DepotJob> {
     let mut after: i64 = 0;
-    let mut last_status = String::new();
+    let mut last_key = String::new();
     let mut quiet_tail: Vec<String> = Vec::new();
-    let spinner = ctx.out.spinner(format!(
+    let mut log_progress = ProgressFromLogs::default();
+    let bar = ctx.out.percent_bar(format!(
         "{} · {}",
         job.slug,
         job_status_label(&job.status)
@@ -457,7 +458,7 @@ async fn follow_job(
                 .await
             {
                 if !logs.is_empty() {
-                    spinner.suspend(|| {
+                    bar.suspend(|| {
                         for line in &logs {
                             let text = line
                                 .message
@@ -469,6 +470,9 @@ async fn follow_job(
                             }
                             if text.is_empty() {
                                 continue;
+                            }
+                            if let Some(p) = parse_progress_log(text) {
+                                log_progress = p;
                             }
                             if verbose {
                                 ctx.out.log_line(line.stream.as_deref(), text);
@@ -485,9 +489,14 @@ async fn follow_job(
             }
         }
         if DEPOT_TERMINAL.contains(&job.status.as_str()) {
-            spinner.finish_and_clear();
+            let (cur, total, mut pct) = job_progress_tuple(&job, &log_progress);
+            if job.status == "succeeded" {
+                pct = 100;
+            }
+            bar.set_position(pct.clamp(0, 100) as u64);
+            bar.finish_and_clear();
             if !ctx.out.json {
-                ctx.out.status_line(&job.status);
+                ctx.out.status_progress(cur, total, pct, job_status_label(&job.status));
                 if let Some(hit) = quiet_tail.iter().rev().find_map(|l| cache_hit_label(l)) {
                     ctx.out.info(format!("Build cache: {hit}"));
                 }
@@ -505,15 +514,19 @@ async fn follow_job(
             }
             return Ok(job);
         }
-        if job.status != last_status {
-            last_status = job.status.clone();
-            spinner.set_message(format!(
-                "{} · {}",
-                job.slug,
-                job_status_label(&job.status)
-            ));
+        let (cur, total, pct) = job_progress_tuple(&job, &log_progress);
+        let label = job_status_label(&job.status);
+        let key = format!("{cur}/{total}/{pct}/{}", job.status);
+        if key != last_key {
+            last_key = key;
+            bar.set_position(pct.clamp(0, 100) as u64);
+            if total > 0 {
+                bar.set_message(format!("{} · [{cur}/{total} · {pct}%] {label}", job.slug));
+            } else {
+                bar.set_message(format!("{} · [{pct}%] {label}", job.slug));
+            }
             if !ctx.out.json {
-                spinner.suspend(|| ctx.out.status_line(&job.status));
+                bar.suspend(|| ctx.out.status_progress(cur, total, pct, label));
             }
         }
         tokio::time::sleep(Duration::from_millis(1500)).await;
@@ -528,14 +541,71 @@ async fn follow_job(
         {
             Ok(next) => job = next,
             Err(err) if is_retryable_edge(&err) => {
-                spinner.set_message(format!("{} · reconnecting…", job.slug));
+                bar.set_message(format!("{} · reconnecting…", job.slug));
                 continue;
             }
             Err(err) => {
-                spinner.finish_and_clear();
+                bar.finish_and_clear();
                 return Err(err);
             }
         }
+    }
+}
+
+#[derive(Default, Clone)]
+struct ProgressFromLogs {
+    current: i32,
+    total: i32,
+    percent: i32,
+}
+
+fn parse_progress_log(text: &str) -> Option<ProgressFromLogs> {
+    let t = text.trim();
+    let rest = t.strip_prefix("progress ")?;
+    let mut parts = rest.split_whitespace();
+    let frac = parts.next()?;
+    let (cur_s, total_s) = frac.split_once('/')?;
+    let current: i32 = cur_s.parse().ok()?;
+    let total: i32 = total_s.parse().ok()?;
+    let pct_s = parts.next()?.trim_end_matches('%');
+    let percent: i32 = pct_s.parse().ok()?;
+    if current <= 0 || total <= 0 {
+        return None;
+    }
+    Some(ProgressFromLogs {
+        current,
+        total,
+        percent: percent.clamp(0, 100),
+    })
+}
+
+fn job_progress_tuple(job: &DepotJob, from_logs: &ProgressFromLogs) -> (i32, i32, i32) {
+    if let Some(p) = job.progress.as_ref().filter(|p| p.total > 0) {
+        return (p.current.max(0), p.total, p.percent.clamp(0, 100));
+    }
+    if from_logs.total > 0 {
+        return (
+            from_logs.current,
+            from_logs.total,
+            from_logs.percent.clamp(0, 100),
+        );
+    }
+    (0, 0, status_fallback_percent(&job.status))
+}
+
+fn status_fallback_percent(status: &str) -> i32 {
+    match status {
+        "queued" | "claimed" => 0,
+        "cloning" => 8,
+        "scanning_source" | "scanning_policy" => 20,
+        "scanning_security" => 30,
+        "building" => 45,
+        "packing" => 65,
+        "scanning_bundle" => 75,
+        "staging" => 85,
+        "finalizing" => 95,
+        "succeeded" => 100,
+        _ => 5,
     }
 }
 
@@ -559,6 +629,18 @@ fn cache_hit_label(text: &str) -> Option<&'static str> {
         "miss" => "miss",
         _ => "hit",
     })
+}
+
+#[cfg(test)]
+mod progress_tests {
+    use super::*;
+
+    #[test]
+    fn parses_progress_log_lines() {
+        let p = parse_progress_log("progress 3/8 37% building").unwrap();
+        assert_eq!((p.current, p.total, p.percent), (3, 8, 37));
+        assert!(parse_progress_log("step build/build_with_cache starting").is_none());
+    }
 }
 
 fn quiet_failure_tail(lines: &[String], max: usize) -> Vec<String> {

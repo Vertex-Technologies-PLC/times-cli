@@ -164,6 +164,23 @@ impl Output {
         eprintln!("{} {}", style("●").cyan(), style(label).bold());
     }
 
+    pub fn status_progress(&self, current: i32, total: i32, percent: i32, label: &str) {
+        if self.json {
+            return;
+        }
+        let counter = if total > 0 {
+            format!("[{current}/{total} · {percent}%]")
+        } else {
+            format!("[{percent}%]")
+        };
+        eprintln!(
+            "{} {} {}",
+            style("●").cyan(),
+            style(counter).cyan().bold(),
+            style(label).bold()
+        );
+    }
+
     pub fn table(&self, headers: &[&str], rows: Vec<Vec<String>>) {
         if self.json {
             return;
