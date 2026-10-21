@@ -146,7 +146,7 @@ async fn create(ctx: &mut Ctx) -> anyhow::Result<()> {
     let defaults = identity_from_manifest(&loaded.value)?;
 
     if !ctx.out.interactive {
-        return create_via_api(ctx, &loaded, defaults).await;
+        return create_via_api(ctx, &loaded, defaults, None).await;
     }
 
     let choice = ctx.out.select(
@@ -162,7 +162,8 @@ async fn create(ctx: &mut Ctx) -> anyhow::Result<()> {
         _ => {
             let identity = prompt_identity(ctx, &defaults)?;
             apply_identity(&loaded, &identity)?;
-            create_via_api(ctx, &loaded, identity).await
+            let listing = prompt_listing(ctx, &identity)?;
+            create_via_api(ctx, &loaded, identity, Some(listing)).await
         }
     }
 }
@@ -252,6 +253,7 @@ async fn create_via_api(
     ctx: &mut Ctx,
     loaded: &Loaded,
     identity: Identity,
+    listing: Option<serde_json::Value>,
 ) -> anyhow::Result<()> {
     let body = json!({
         "slug": identity.slug,
@@ -270,6 +272,16 @@ async fn create_via_api(
         kind: aip.kind.clone(),
         mode: aip.mode.clone().unwrap_or(identity.mode),
     })?;
+    if let Some(listing_body) = listing {
+        let _: Listing = ctx
+            .client
+            .put(
+                &format!("{}/listing", aip_path(&aip.slug)),
+                Some(&token),
+                &listing_body,
+            )
+            .await?;
+    }
     if ctx.out.json {
         return ctx.out.json(&aip);
     }
@@ -277,6 +289,86 @@ async fn create_via_api(
         .success(format!("Created {} ({}).", aip.slug, aip.kind));
     ctx.out.info("Next: run `times aip deploy`.");
     Ok(())
+}
+
+fn prompt_listing(ctx: &Ctx, identity: &Identity) -> anyhow::Result<serde_json::Value> {
+    ctx.out.info("Listing (optional fields can be left blank).");
+    let name = ctx.out.text("Listing name", &identity.name)?;
+    let summary = ctx.out.text("Summary", "")?;
+    let description = ctx.out.text("Description", "")?;
+    let categories = vec![
+        "accounting".into(),
+        "analytics".into(),
+        "communication".into(),
+        "crm".into(),
+        "custom".into(),
+        "ecommerce".into(),
+        "finance".into(),
+        "hr".into(),
+        "industry".into(),
+        "inventory".into(),
+        "marketing".into(),
+        "payments".into(),
+        "productivity".into(),
+        "sales".into(),
+        "tax".into(),
+    ];
+    let cat_idx = ctx.out.select("Category", categories.clone())?;
+    let category = categories[cat_idx].clone();
+    let logo_url = ctx.out.text("Logo URL (https)", "")?;
+    let support_url = ctx.out.text("Support URL (https)", "")?;
+    let privacy_url = ctx.out.text("Privacy URL (https)", "")?;
+    let website_url = ctx.out.text("Website URL (https)", "")?;
+    let pricing_opts = vec!["free".into(), "paid".into()];
+    let pricing_idx = ctx.out.select("Pricing", pricing_opts.clone())?;
+    let pricing = pricing_opts[pricing_idx].clone();
+    let (price_etb, billing_period, trial_days) = if pricing == "paid" {
+        let price = ctx.out.text("Price (ETB)", "")?;
+        let periods = vec!["one_time".into(), "monthly".into(), "yearly".into()];
+        let period_idx = ctx.out.select("Billing period", periods.clone())?;
+        let trial = ctx.out.text("Trial days (0–90, blank for none)", "")?;
+        (
+            price.trim().parse::<f64>().ok(),
+            Some(periods[period_idx].clone()),
+            trial.trim().parse::<i64>().ok(),
+        )
+    } else {
+        let trial = ctx.out.text("Trial days (0–90, blank for none)", "")?;
+        (None, None, trial.trim().parse::<i64>().ok())
+    };
+    let member_slugs = if identity.kind == "pack" {
+        let raw = ctx.out.text("Member slugs (comma-separated)", "")?;
+        raw.split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
+    let empty_to_null = |s: String| {
+        let t = s.trim().to_string();
+        if t.is_empty() {
+            serde_json::Value::Null
+        } else {
+            json!(t)
+        }
+    };
+    Ok(json!({
+        "name": name.trim(),
+        "summary": summary.trim(),
+        "description": description.trim(),
+        "category": category,
+        "logoUrl": empty_to_null(logo_url),
+        "screenshots": [],
+        "supportUrl": empty_to_null(support_url),
+        "privacyUrl": empty_to_null(privacy_url),
+        "websiteUrl": empty_to_null(website_url),
+        "pricing": pricing,
+        "priceEtb": price_etb,
+        "billingPeriod": billing_period,
+        "trialDays": trial_days,
+        "memberSlugs": member_slugs,
+    }))
 }
 
 async fn create_via_browser(
@@ -675,9 +767,9 @@ async fn follow_job(
             last_key = key;
             bar.set_position(pct.clamp(0, 100) as u64);
             if total > 0 {
-                bar.set_message(format!("{} · [{cur}/{total} · {pct}%] {label}", job.slug));
+                bar.set_message(format!("{} · {label}  [{cur}/{total} · {pct}%]", job.slug));
             } else {
-                bar.set_message(format!("{} · [{pct}%] {label}", job.slug));
+                bar.set_message(format!("{} · {label}  [{pct}%]", job.slug));
             }
             if !ctx.out.json {
                 bar.suspend(|| ctx.out.status_progress(cur, total, pct, label));

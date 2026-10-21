@@ -46,10 +46,11 @@ impl LocalCreateServer {
     }
 
     pub fn portal_url(&self, prefill: &Identity) -> anyhow::Result<String> {
-        let mut url = Url::parse(&format!("{DEVELOPERS_ORIGIN}/dashboard/aips/new"))
+        let mut url = Url::parse(&format!("{DEVELOPERS_ORIGIN}/dashboard/aips"))
             .expect("developers origin is valid");
         {
             let mut q = url.query_pairs_mut();
+            q.append_pair("create", "1");
             q.append_pair("cli", "1");
             q.append_pair("cli_port", &self.port.to_string());
             q.append_pair("cli_token", &self.token);
@@ -308,8 +309,9 @@ mod tests {
             })
             .unwrap();
         let parsed = Url::parse(&url).unwrap();
-        assert_eq!(parsed.path(), "/dashboard/aips/new");
+        assert_eq!(parsed.path(), "/dashboard/aips");
         let pairs: HashMap<_, _> = parsed.query_pairs().into_owned().collect();
+        assert_eq!(pairs.get("create").map(String::as_str), Some("1"));
         assert_eq!(pairs.get("cli").map(String::as_str), Some("1"));
         assert_eq!(pairs.get("cli_port"), Some(&port));
         assert_eq!(pairs.get("cli_token"), Some(&token));

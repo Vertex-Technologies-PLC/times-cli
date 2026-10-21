@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.22
+
+- `times aip create` browser flow opens `/dashboard/aips?create=1` (create wizard modal).
+- Terminal create prompts for the full listing after identity, then POSTs create and PUTs listing.
+- Deploy/scan/retry progress prints the label on the left and the counter on the right.
+
 ## 0.4.21
 
 - `times aip create` asks whether to configure in the browser or the terminal. Browser opens the developers portal and waits for create or cancel. Terminal prompts for name, slug, kind, and mode.

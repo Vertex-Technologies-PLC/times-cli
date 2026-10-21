@@ -137,10 +137,15 @@ impl Output {
         if self.json {
             return;
         }
+        let label = msg.as_ref();
+        let counter = format!("[{n}/{total}]");
+        let width = terminal_width().saturating_sub(1);
+        let pad = width.saturating_sub(label.chars().count() + counter.len() + 1);
         eprintln!(
-            "{} {}",
-            style(format!("[{n}/{total}]")).cyan().bold(),
-            msg.as_ref()
+            "{}{}{}",
+            label,
+            " ".repeat(pad.max(1)),
+            style(counter).cyan().bold()
         );
     }
 
@@ -173,11 +178,15 @@ impl Output {
         } else {
             format!("[{percent}%]")
         };
+        let left = format!("{} {}", style("●").cyan(), style(label).bold());
+        let width = terminal_width().saturating_sub(1);
+        let left_len = visible_len(&format!("● {label}"));
+        let pad = width.saturating_sub(left_len + counter.len());
         eprintln!(
-            "{} {} {}",
-            style("●").cyan(),
-            style(counter).cyan().bold(),
-            style(label).bold()
+            "{}{}{}",
+            left,
+            " ".repeat(pad.max(1)),
+            style(counter).cyan().bold()
         );
     }
 
@@ -236,6 +245,18 @@ pub fn render_table(headers: &[&str], rows: &[Vec<String>]) -> String {
         out.push_str(&fmt_row(row.clone()));
     }
     out
+}
+
+fn terminal_width() -> usize {
+    console::Term::stderr()
+        .size_checked()
+        .map(|(_, cols)| cols as usize)
+        .unwrap_or(80)
+        .max(40)
+}
+
+fn visible_len(s: &str) -> usize {
+    s.chars().count()
 }
 
 pub fn or_dash(v: Option<impl ToString>) -> String {
