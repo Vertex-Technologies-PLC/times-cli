@@ -420,7 +420,11 @@ fn theme_job(m: &Value, root: Option<&Path>, r: &mut Report) {
 }
 
 fn catalog_file_checks(m: &Value, root: &Path, r: &mut Report) {
-    let mut keys: Vec<String> = vec!["meta.name".into()];
+    let mut keys: Vec<String> = vec![
+        "meta.name".into(),
+        "meta.summary".into(),
+        "meta.description".into(),
+    ];
     if let (Some(version), Some(entries)) = (
         str_at(m, "/version"),
         m.pointer("/changelog").and_then(Value::as_array),
@@ -473,8 +477,8 @@ fn catalog_file_checks(m: &Value, root: &Path, r: &mut Report) {
                 Some(Value::String(_)) => {
                     r.warn(pointer.clone(), format!("`{key}` is empty in {rel}."))
                 }
-                _ if key == "meta.name" => {
-                    r.warn(pointer.clone(), format!("Add `meta.name` to {rel}."))
+                _ if key.starts_with("meta.") => {
+                    r.error(pointer.clone(), format!("Add `{key}` to {rel}."))
                 }
                 _ => r.error(pointer.clone(), format!("`{key}` is missing from {rel}.")),
             }
@@ -845,17 +849,29 @@ mod tests {
         let msgs = dir.path().join("i18n/messages");
         fs::create_dir_all(&msgs).unwrap();
         let full = json!({
-            "meta": { "name": "My App" },
+            "meta": {
+                "name": "My App",
+                "summary": "A short summary for the store.",
+                "description": "A longer description used for the marketplace listing detail page."
+            },
             "changelog": { "v1_0_0": { "summary": "First", "h1": "Hello" } }
         });
         fs::write(msgs.join("en.json"), full.to_string()).unwrap();
         let am = json!({
-            "meta": { "name": "መተግበሪያ" },
+            "meta": {
+                "name": "መተግበሪያ",
+                "summary": "ለመደብሩ አጭር ማጠቃለያ።",
+                "description": "በገበያ ዝርዝር ገጽ ላይ የሚታይ ረዘም ያለ መግለጫ።"
+            },
             "changelog": { "v1_0_0": { "summary": "መጀመሪያ", "h1": "ሰላም" } }
         });
         fs::write(msgs.join("am.json"), am.to_string()).unwrap();
         let om = json!({
-            "meta": { "name": "Appii" },
+            "meta": {
+                "name": "Appii",
+                "summary": "Cuunfaa gabaabaa gabaaf.",
+                "description": "Ibsa dheeraa fuula tarree gabaatii irratti mul'atu."
+            },
             "changelog": { "v1_0_0": { "summary": "Jalqaba", "h1": "Nagaa" } }
         });
         fs::write(msgs.join("om.json"), om.to_string()).unwrap();
@@ -870,7 +886,7 @@ mod tests {
         assert!(r
             .errors
             .iter()
-            .any(|e| e.path == "/i18n/catalogs/ti" && e.message.contains("summary")));
+            .any(|e| e.path == "/i18n/catalogs/ti" && e.message.contains("meta.summary")));
         assert!(r.warnings.iter().any(|w| w.path == "/ui/entry"));
     }
 
@@ -880,7 +896,11 @@ mod tests {
         let msgs = dir.path().join("i18n/messages");
         fs::create_dir_all(&msgs).unwrap();
         let en = json!({
-            "meta": { "name": "My App" },
+            "meta": {
+                "name": "My App",
+                "summary": "A short summary for the store.",
+                "description": "A longer description used for the marketplace listing detail page."
+            },
             "changelog": { "v1_0_0": { "summary": "First — note", "h1": "Hello" } }
         });
         for l in ["en", "am", "om", "ti"] {

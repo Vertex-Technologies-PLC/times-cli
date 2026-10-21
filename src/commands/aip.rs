@@ -291,11 +291,39 @@ async fn create_via_api(
     Ok(())
 }
 
+fn guest_meta_defaults(identity: &Identity) -> (String, String, String) {
+    let loaded = load_manifest().ok();
+    let catalog = loaded.as_ref().and_then(|m| {
+        let rel = str_at(&m.value, "/i18n/catalogs/en")?;
+        let text = std::fs::read_to_string(manifest::relative(Path::new("."), rel)).ok()?;
+        serde_json::from_str::<serde_json::Value>(&text).ok()
+    });
+    let meta = catalog.as_ref().and_then(|c| c.get("meta"));
+    let pick = |key: &str| -> String {
+        meta.and_then(|m| m.get(key))
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .unwrap_or("")
+            .to_string()
+    };
+    let name = {
+        let from_meta = pick("name");
+        if from_meta.is_empty() {
+            identity.name.clone()
+        } else {
+            from_meta
+        }
+    };
+    (name, pick("summary"), pick("description"))
+}
+
 fn prompt_listing(ctx: &Ctx, identity: &Identity) -> anyhow::Result<serde_json::Value> {
-    ctx.out.info("Listing (optional fields can be left blank).");
-    let name = ctx.out.text("Listing name", &identity.name)?;
-    let summary = ctx.out.text("Summary", "")?;
-    let description = ctx.out.text("Description", "")?;
+    ctx.out.info("Listing (optional fields can be left blank). Defaults come from guest meta.*.");
+    let (default_name, default_summary, default_description) = guest_meta_defaults(identity);
+    let name = ctx.out.text("Listing name", &default_name)?;
+    let summary = ctx.out.text("Summary", &default_summary)?;
+    let description = ctx.out.text("Description", &default_description)?;
     let categories = vec![
         "accounting".into(),
         "analytics".into(),

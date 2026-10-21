@@ -14,6 +14,8 @@ struct Copy {
     body: &'static str,
     summary: &'static str,
     highlight: &'static str,
+    listing_summary: &'static str,
+    listing_description: &'static str,
 }
 
 fn copy(locale: &str) -> Copy {
@@ -23,24 +25,36 @@ fn copy(locale: &str) -> Copy {
             body: "የእርስዎን AIP ለመገንባት የመነሻ ገጹን ያርትዑ።",
             summary: "የመጀመሪያ ልቀት።",
             highlight: "መተግበሪያውን ከስራ ቦታዎ ይክፈቱ።",
+            listing_summary: "በTIMES ውስጥ የሚሰራ አጭር መግለጫ።",
+            listing_description:
+                "ይህን AIP በመደብሩ ላይ የሚታየውን ስም፣ ማጠቃለያ እና መግለጫ ያስተካክሉ። እንግዶቹ ካታሎጎች የገበያ ቅጂ ምንጭ ናቸው።",
         },
         "om" => Copy {
             title: "Ni hojjeta.",
             body: "AIP kee ijaaruuf fuula jalqabaa gulaali.",
             summary: "Gadhiifama jalqabaa.",
             highlight: "Appicha bakka hojii keessanii banaa.",
+            listing_summary: "Ibsa gabaabaa TIMES keessatti hojjetu.",
+            listing_description:
+                "Maqaa, cuunfaa fi ibsa AIP kanaa tarree gurgurtaa irratti mul'atu gulaali. Katoloogoonni keessummaa madda qophee gabaatii ti.",
         },
         "ti" => Copy {
             title: "ይሰርሕ ኣሎ።",
             body: "AIP ኻ ንምህናጽ ናይ መጀመርታ ገጽ ኣርትዕ።",
             summary: "ቀዳማይ ሕታም።",
             highlight: "ነቲ መተግበሪ ካብ ቦታ ስራሕኩም ክፈቱዎ።",
+            listing_summary: "ኣብ TIMES ዝሰርሕ ሓጺር መግለጺ።",
+            listing_description:
+                "ነዚ AIP ኣብ ድኳን ዝረአ ስም፣ መጠቓለሊን መግለጺን ኣርትዑ። ካታሎጋት ኣጋይሽ ምንጪ ቅዳሕ ዕዳጋ እዮም።",
         },
         _ => Copy {
             title: "It works.",
             body: "Edit the starter page to build your AIP.",
             summary: "First release.",
             highlight: "Open the app from your workspace.",
+            listing_summary: "A short summary for the TIMES marketplace.",
+            listing_description:
+                "Edit this AIP name, summary, and description for the store listing. Guest catalogs are the source of marketplace copy.",
         },
     }
 }
@@ -399,7 +413,11 @@ fn hosting_json(o: &Options) -> Value {
 fn catalog(locale: &str, name: &str) -> String {
     let c = copy(locale);
     let v = json!({
-        "meta": { "name": name },
+        "meta": {
+            "name": name,
+            "summary": c.listing_summary,
+            "description": c.listing_description
+        },
         "home": { "title": c.title, "body": c.body },
         "changelog": { "v1_0_0": { "summary": c.summary, "h1": c.highlight } }
     });
