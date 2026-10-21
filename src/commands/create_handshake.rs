@@ -145,12 +145,13 @@ fn serve_until_result(server: &Server, expected_token: &str) -> anyhow::Result<C
         match parse_callback(&raw_url, expected_token) {
             Ok(result) => {
                 let body = match &result {
-                    CreateHandshake::Created(id) => format!(
-                        "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"/><title>TIMES CLI</title></head><body style=\"font-family:system-ui,sans-serif;padding:2rem;\"><h1>AIP created</h1><p><code>{}</code> is ready. Return to your terminal.</p></body></html>",
-                        html_escape(&id.slug)
+                    CreateHandshake::Created(id) => result_page(
+                        ResultKind::Created,
+                        &id.name,
+                        &id.slug,
                     ),
                     CreateHandshake::Cancelled => {
-                        "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"/><title>TIMES CLI</title></head><body style=\"font-family:system-ui,sans-serif;padding:2rem;\"><h1>Create cancelled</h1><p>Return to your terminal.</p></body></html>".into()
+                        result_page(ResultKind::Cancelled, "", "")
                     }
                 };
                 let response = cors_response(
@@ -285,6 +286,178 @@ fn html_escape(s: &str) -> String {
         .replace('<', "&lt;")
         .replace('>', "&gt;")
         .replace('"', "&quot;")
+}
+
+enum ResultKind {
+    Created,
+    Cancelled,
+}
+
+fn result_page(kind: ResultKind, name: &str, slug: &str) -> String {
+    let (title, kicker, detail, mark_class) = match kind {
+        ResultKind::Created => {
+            let label = if name.is_empty() {
+                html_escape(slug)
+            } else {
+                html_escape(name)
+            };
+            let slug_line = if slug.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    "<p class=\"slug\"><code>{}</code></p>",
+                    html_escape(slug)
+                )
+            };
+            (
+                "AIP created",
+                "Ready on TIMES",
+                format!(
+                    "<p class=\"lead\">{label} is set up.</p>{slug_line}<p class=\"hint\">Return to your terminal to keep going. You can close this tab.</p>"
+                ),
+                "mark-ok",
+            )
+        }
+        ResultKind::Cancelled => (
+            "Create cancelled",
+            "TIMES CLI",
+            "<p class=\"lead\">Nothing was created.</p><p class=\"hint\">Return to your terminal. You can close this tab.</p>"
+                .into(),
+            "mark-cancel",
+        ),
+    };
+
+    format!(
+        r##"<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>{title} · TIMES</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com"/>
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,500;0,9..40,700;1,9..40,500&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet"/>
+  <style>
+    :root {{
+      --ink: #12141a;
+      --muted: #5c6370;
+      --paper: #f3f1eb;
+      --panel: rgba(255,255,255,0.72);
+      --line: rgba(18,20,26,0.1);
+      --ok: #1f7a4c;
+      --ok-soft: #d8efe3;
+      --cancel: #6b7280;
+      --cancel-soft: #e8eaed;
+    }}
+    * {{ box-sizing: border-box; }}
+    html, body {{ height: 100%; margin: 0; }}
+    body {{
+      font-family: "DM Sans", system-ui, sans-serif;
+      color: var(--ink);
+      background:
+        radial-gradient(1200px 700px at 12% -10%, #dfe8ff 0%, transparent 55%),
+        radial-gradient(900px 600px at 100% 0%, #e7f5ec 0%, transparent 50%),
+        linear-gradient(180deg, #faf9f6 0%, var(--paper) 100%);
+      display: grid;
+      place-items: center;
+      padding: 2rem 1.25rem;
+    }}
+    main {{
+      width: min(100%, 28rem);
+      text-align: center;
+    }}
+    .brand {{
+      font-size: 0.75rem;
+      font-weight: 700;
+      letter-spacing: 0.22em;
+      text-transform: uppercase;
+      color: var(--ink);
+      margin: 0 0 1.75rem;
+    }}
+    .panel {{
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 1.25rem;
+      padding: 2rem 1.5rem 1.75rem;
+      backdrop-filter: blur(10px);
+      box-shadow: 0 18px 40px rgba(18, 20, 26, 0.06);
+    }}
+    .mark {{
+      width: 3.25rem;
+      height: 3.25rem;
+      margin: 0 auto 1.1rem;
+      border-radius: 999px;
+      display: grid;
+      place-items: center;
+      font-size: 1.35rem;
+      font-weight: 700;
+      line-height: 1;
+    }}
+    .mark-ok {{ background: var(--ok-soft); color: var(--ok); }}
+    .mark-cancel {{ background: var(--cancel-soft); color: var(--cancel); }}
+    .kicker {{
+      margin: 0 0 0.35rem;
+      font-size: 0.8rem;
+      font-weight: 500;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }}
+    h1 {{
+      margin: 0 0 0.85rem;
+      font-size: clamp(1.65rem, 4vw, 2rem);
+      font-weight: 700;
+      letter-spacing: -0.03em;
+      line-height: 1.15;
+    }}
+    .lead {{
+      margin: 0;
+      font-size: 1.05rem;
+      line-height: 1.45;
+      color: var(--ink);
+    }}
+    .slug {{
+      margin: 0.65rem 0 0;
+    }}
+    .slug code {{
+      font-family: "JetBrains Mono", ui-monospace, monospace;
+      font-size: 0.82rem;
+      font-weight: 500;
+      padding: 0.28rem 0.55rem;
+      border-radius: 0.45rem;
+      background: rgba(18, 20, 26, 0.06);
+      color: var(--ink);
+    }}
+    .hint {{
+      margin: 1.15rem 0 0;
+      font-size: 0.92rem;
+      line-height: 1.45;
+      color: var(--muted);
+    }}
+  </style>
+</head>
+<body>
+  <main>
+    <p class="brand">TIMES</p>
+    <div class="panel">
+      <div class="mark {mark_class}" aria-hidden="true">{mark_glyph}</div>
+      <p class="kicker">{kicker}</p>
+      <h1>{title}</h1>
+      {detail}
+    </div>
+  </main>
+</body>
+</html>
+"##,
+        title = title,
+        kicker = kicker,
+        detail = detail,
+        mark_class = mark_class,
+        mark_glyph = match kind {
+            ResultKind::Created => "✓",
+            ResultKind::Cancelled => "×",
+        },
+    )
 }
 
 #[cfg(test)]
