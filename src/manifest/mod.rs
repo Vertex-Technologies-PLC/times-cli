@@ -47,6 +47,9 @@ pub const ALLOWED_SCOPES: &[&str] = &[
     "lender:read",
     "lender:write",
     "lender:admin",
+    "device:camera",
+    "device:clipboard-read",
+    "device:clipboard-write",
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
