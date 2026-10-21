@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.23
+
+- Allow `device:camera`, `device:clipboard-read`, and `device:clipboard-write` in AIP manifests.
+
 ## 0.4.22
 
 - `times aip create` browser flow opens `/dashboard/aips?create=1` (create wizard modal).
