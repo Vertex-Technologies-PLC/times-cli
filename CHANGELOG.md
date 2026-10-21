@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.25
+
+- Guest catalogs must define plain `meta.name`, `meta.summary`, and `meta.description` (all locales). Terminal `times aip create` listing prompts default from English guest meta.
+
 ## 0.4.24
 
 - `times manifest validate` and `times aip deploy` load allowed scopes from `GET /api/v1/apps/catalog/public/scopes` and cache them. A scope published on the gateway is accepted without a new CLI build.
