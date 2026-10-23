@@ -34,7 +34,8 @@ pub async fn run(ctx: &mut Ctx, cmd: AipCmd) -> anyhow::Result<()> {
             submit,
             bump,
             verbose,
-        } => deploy(ctx, dir, remote, r#ref, follow, submit, bump, verbose).await,
+            purge_cache,
+        } => deploy(ctx, dir, remote, r#ref, follow, submit, bump, verbose, purge_cache).await,
         AipCmd::Submit { notes, version } => submit(ctx, notes, version).await,
         AipCmd::Status { slug, version } => status(ctx, slug, version).await,
         AipCmd::Withdraw { version, slug } => withdraw(ctx, slug, version).await,
@@ -515,6 +516,7 @@ async fn deploy(
     submit_after: bool,
     bump_level: Option<crate::manifest::bump::Level>,
     verbose: bool,
+    purge_cache: bool,
 ) -> anyhow::Result<()> {
     let project_dir = if dir.as_os_str() == "." {
         PathBuf::from(".")
@@ -550,6 +552,10 @@ async fn deploy(
     let version = str_at(m, "/version").map(str::to_string);
     let token = ctx.erp_token().await?;
 
+    if purge_cache && !ctx.out.json {
+        ctx.out.info("Purging org build cache before deploy…");
+    }
+
     let job = if let Some(repo_url) = remote {
         warn_dotenv_files(ctx, &loaded.root);
         let body = json!({
@@ -559,6 +565,7 @@ async fn deploy(
             "github_repo_url": repo_url,
             "git_ref": git_ref,
             "version": version,
+            "purge_cache": purge_cache,
         });
         let job: DepotJob = ctx
             .client
@@ -609,6 +616,7 @@ async fn deploy(
             "trigger_kind": "cli_local",
             "source_blob_sha": source_sha,
             "version": version,
+            "purge_cache": purge_cache,
         });
         let job: DepotJob = post_with_retry(ctx, "/api/v1/depot/jobs", &token, &body).await?;
         if !ctx.out.json {

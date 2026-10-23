@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.28
+
+- `times aip deploy --purge-cache` clears the org depot build cache before queuing the job (same choice as the portal deploy confirmation).
+
 ## 0.4.27
 
 - `times aip env list|set|get|delete` manages depot build-time environment variables and secrets (same API as the developers portal).

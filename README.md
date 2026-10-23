@@ -50,6 +50,7 @@ times aip submit
 | `times init [dir]` | Create a new AIP project. Creates a folder named after the slug unless `dir` is `.`. |
 | `times manifest validate` / `times manifest bump <level>` | Check or bump `times.aip.json` (and `package.json` version). |
 | `times aip deploy --bump <level>` | Bump then stage via depot. |
+| `times aip deploy --purge-cache` | Purge org build cache, then deploy. |
 | `times dev` | Serve your build locally. |
 | `times aip list\|create\|info\|push\|submit\|status\|scan\|doctor\|listing\|env\|origin\|delete\|open\|logs\|withdraw` | Manage AIPs, versions, and depot env secrets. |
 | `times stats` | Installs, usage and revenue. |

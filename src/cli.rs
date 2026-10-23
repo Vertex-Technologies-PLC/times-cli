@@ -301,6 +301,9 @@ pub enum AipCmd {
         /// Stream full depot build logs (default: quiet status only)
         #[arg(long, env = "TIMES_DEPLOY_VERBOSE")]
         verbose: bool,
+        /// Purge this org's depot build cache before queuing the job
+        #[arg(long)]
+        purge_cache: bool,
     },
     /// Scan the project (local by default, or via depot with --remote)
     Scan {
