@@ -51,7 +51,7 @@ times aip submit
 | `times manifest validate` / `times manifest bump <level>` | Check or bump `times.aip.json` (and `package.json` version). |
 | `times aip deploy --bump <level>` | Bump then stage via depot. |
 | `times dev` | Serve your build locally. |
-| `times aip list\|create\|info\|push\|submit\|status\|scan\|doctor\|listing\|origin\|delete\|open\|logs\|withdraw` | Manage AIPs and versions. |
+| `times aip list\|create\|info\|push\|submit\|status\|scan\|doctor\|listing\|env\|origin\|delete\|open\|logs\|withdraw` | Manage AIPs, versions, and depot env secrets. |
 | `times stats` | Installs, usage and revenue. |
 | `times earnings` | Balance and earnings. |
 | `times payout list\|accounts\|request` | Withdrawals and payout accounts. |

@@ -4,16 +4,18 @@ use std::time::Duration;
 use serde_json::{json, Value};
 
 use crate::api::types::{
-    Aip, DepotJob, DepotJobLog, DevMe, Items, Listing, Submission, SubmissionDetail,
+    Aip, DepotEnvReveal, DepotEnvVar, DepotJob, DepotJobLog, DevMe, Items, Listing, Submission,
+    SubmissionDetail,
 };
 use crate::api::seg;
 use crate::bundle::{self, human_size, MAX_BUNDLE_BYTES};
-use crate::cli::{AipCmd, ListingCmd, OriginCmd};
+use crate::cli::{AipCmd, EnvCmd, ListingCmd, OriginCmd};
 use crate::context::Ctx;
 use crate::error::CliError;
 use super::create_handshake::{CreateHandshake, Identity, LocalCreateServer};
 use crate::hosting;
 use crate::manifest::{self, str_at, Loaded};
+use crate::pack_ignore;
 use crate::ui::{or_dash, short_date};
 
 const DEVELOPERS_ORIGIN: &str = "https://developers.times.et";
@@ -53,6 +55,7 @@ pub async fn run(ctx: &mut Ctx, cmd: AipCmd) -> anyhow::Result<()> {
         AipCmd::Open { slug } => open_aip(ctx, slug).await,
         AipCmd::Origin(OriginCmd::Check { url }) => origin_check(ctx, url).await,
         AipCmd::Listing(cmd) => listing(ctx, cmd).await,
+        AipCmd::Env(cmd) => env_cmd(ctx, cmd).await,
     }
 }
 
@@ -548,6 +551,7 @@ async fn deploy(
     let token = ctx.erp_token().await?;
 
     let job = if let Some(repo_url) = remote {
+        warn_dotenv_files(ctx, &loaded.root);
         let body = json!({
             "slug": slug,
             "kind": "build_and_stage",
@@ -641,6 +645,7 @@ async fn deploy(
 
 fn pack_source_phased(ctx: &Ctx, root: &std::path::Path) -> anyhow::Result<bundle::Bundle> {
     use crate::workspace_pack::PackPhase;
+    warn_dotenv_files(ctx, root);
     bundle::pack_source_with(root, |phase| {
         if ctx.out.json {
             return;
@@ -653,6 +658,34 @@ fn pack_source_phased(ctx: &Ctx, root: &std::path::Path) -> anyhow::Result<bundl
         };
         ctx.out.info(format!("  · {msg}"));
     })
+}
+
+fn warn_dotenv_files(ctx: &Ctx, root: &Path) {
+    let found = match pack_ignore::find_dotenv_files(root) {
+        Ok(paths) => paths,
+        Err(_) => return,
+    };
+    if found.is_empty() {
+        return;
+    }
+    let names: Vec<String> = found
+        .iter()
+        .filter_map(|p| {
+            p.strip_prefix(root)
+                .ok()
+                .map(|rel| rel.display().to_string().replace('\\', "/"))
+        })
+        .take(8)
+        .collect();
+    let listed = names.join(", ");
+    let more = if found.len() > names.len() {
+        format!(" (+{} more)", found.len() - names.len())
+    } else {
+        String::new()
+    };
+    ctx.out.warn(format!(
+        "Found {listed}{more}. Dotenv files are not packed for depot builds. Set secrets with `times aip env set` (or in the developers portal) so they are injected at build time."
+    ));
 }
 
 fn print_deploy_result(ctx: &Ctx, job: &DepotJob) {
@@ -1205,6 +1238,7 @@ async fn scan_only(ctx: &mut Ctx, remote: bool, follow: bool, verbose: bool) -> 
             ),
         );
     }
+    warn_dotenv_files(ctx, &loaded.root);
     let spin = ctx.out.spinner("Scanning…");
     let findings = crate::scan::run(&loaded.root, &packed_list, &hosting);
     spin.finish_and_clear();
@@ -1520,6 +1554,187 @@ async fn listing(ctx: &mut Ctx, cmd: ListingCmd) -> anyhow::Result<()> {
             .await
         }
     }
+}
+
+fn depot_env_path(slug: &str) -> String {
+    format!("/api/v1/depot/aips/{}/env", seg(slug))
+}
+
+fn depot_env_name_path(slug: &str, name: &str) -> String {
+    format!("{}/{}", depot_env_path(slug), seg(name))
+}
+
+fn normalize_env_name(name: &str) -> anyhow::Result<String> {
+    let n = name.trim().to_uppercase();
+    let ok = n.len() <= 64
+        && n
+            .chars()
+            .enumerate()
+            .all(|(i, c)| matches!(c, 'A'..='Z' | '0'..='9' | '_') && (i > 0 || c.is_ascii_uppercase()));
+    if !ok || n.is_empty() {
+        return Err(CliError::validation(
+            "Name must match ^[A-Z][A-Z0-9_]{0,63}$ (example: API_KEY).",
+        ));
+    }
+    Ok(n)
+}
+
+async fn env_cmd(ctx: &mut Ctx, cmd: EnvCmd) -> anyhow::Result<()> {
+    match cmd {
+        EnvCmd::List { slug } => env_list(ctx, slug).await,
+        EnvCmd::Set {
+            name,
+            value,
+            from_file,
+            plain,
+            slug,
+        } => env_set(ctx, slug, name, value, from_file, plain).await,
+        EnvCmd::Get { name, slug } => env_get(ctx, slug, name).await,
+        EnvCmd::Delete { name, slug } => env_delete(ctx, slug, name).await,
+    }
+}
+
+async fn env_list(ctx: &mut Ctx, slug: Option<String>) -> anyhow::Result<()> {
+    let slug = resolve_slug(slug)?;
+    let token = ctx.erp_token().await?;
+    let rows: Vec<DepotEnvVar> = ctx
+        .client
+        .get(&depot_env_path(&slug), Some(&token), &[])
+        .await?;
+    if ctx.out.json {
+        return ctx.out.json(&rows);
+    }
+    if rows.is_empty() {
+        ctx.out.info(format!(
+            "No environment variables for {slug}. Add one with `times aip env set NAME --value …`."
+        ));
+        return Ok(());
+    }
+    let table_rows = rows
+        .into_iter()
+        .map(|row| {
+            vec![
+                row.name,
+                if row.is_secret {
+                    "secret".into()
+                } else {
+                    "variable".into()
+                },
+                or_dash(row.fingerprint.map(|f| {
+                    if f.len() > 12 {
+                        f[..12].to_string()
+                    } else {
+                        f
+                    }
+                })),
+                or_dash(row.updated_at),
+            ]
+        })
+        .collect();
+    ctx.out.table(
+        &["name", "type", "fingerprint", "updated"],
+        table_rows,
+    );
+    Ok(())
+}
+
+async fn env_set(
+    ctx: &mut Ctx,
+    slug: Option<String>,
+    name: String,
+    value: Option<String>,
+    from_file: Option<PathBuf>,
+    plain: bool,
+) -> anyhow::Result<()> {
+    let slug = resolve_slug(slug)?;
+    let name = normalize_env_name(&name)?;
+    let value = if let Some(path) = from_file {
+        std::fs::read_to_string(&path).map_err(|e| {
+            CliError::validation(format!("Could not read {}: {e}", path.display()))
+        })?
+    } else if let Some(v) = value {
+        v
+    } else if ctx.out.interactive {
+        if plain {
+            ctx.out.text(&format!("Value for {name}"), "")?
+        } else {
+            inquire::Password::new(&format!("Secret value for {name}"))
+                .without_confirmation()
+                .prompt()
+                .map_err(|e| match e {
+                    inquire::InquireError::OperationCanceled
+                    | inquire::InquireError::OperationInterrupted => CliError::usage("Cancelled."),
+                    other => CliError::usage(other.to_string()),
+                })?
+        }
+    } else {
+        return Err(CliError::usage(
+            "Pass --value or --from-file when running without a terminal.",
+        ));
+    };
+    if value.is_empty() {
+        return Err(CliError::validation("Value cannot be empty."));
+    }
+    let token = ctx.erp_token().await?;
+    let body = json!({
+        "value": value,
+        "is_secret": !plain,
+    });
+    let row: DepotEnvVar = ctx
+        .client
+        .put(&depot_env_name_path(&slug, &name), Some(&token), &body)
+        .await?;
+    if ctx.out.json {
+        return ctx.out.json(&row);
+    }
+    let kind = if row.is_secret { "secret" } else { "variable" };
+    ctx.out.success(format!("Saved {kind} {name} for {slug}."));
+    ctx.out.info(
+        "Redeploy the AIP (or use Redeploy on a succeeded job) to inject the new value into the build.",
+    );
+    Ok(())
+}
+
+async fn env_get(ctx: &mut Ctx, slug: Option<String>, name: String) -> anyhow::Result<()> {
+    let slug = resolve_slug(slug)?;
+    let name = normalize_env_name(&name)?;
+    let token = ctx.erp_token().await?;
+    let revealed: DepotEnvReveal = ctx
+        .client
+        .get(
+            &format!("{}/reveal", depot_env_name_path(&slug, &name)),
+            Some(&token),
+            &[],
+        )
+        .await?;
+    if ctx.out.json {
+        return ctx.out.json(&revealed);
+    }
+    ctx.out.fields(&[
+        ("name", revealed.name),
+        ("value", revealed.value),
+    ]);
+    Ok(())
+}
+
+async fn env_delete(ctx: &mut Ctx, slug: Option<String>, name: String) -> anyhow::Result<()> {
+    let slug = resolve_slug(slug)?;
+    let name = normalize_env_name(&name)?;
+    if !ctx.out.confirm(&format!(
+        "Delete environment variable {name} from {slug}?"
+    ))? {
+        return Ok(());
+    }
+    let token = ctx.erp_token().await?;
+    let _: Value = ctx
+        .client
+        .delete(&depot_env_name_path(&slug, &name), Some(&token))
+        .await?;
+    if ctx.out.json {
+        return ctx.out.json(&json!({ "deleted": name, "slug": slug }));
+    }
+    ctx.out.success(format!("Deleted {name} from {slug}."));
+    Ok(())
 }
 
 async fn listing_get(ctx: &mut Ctx, slug: Option<String>) -> anyhow::Result<()> {

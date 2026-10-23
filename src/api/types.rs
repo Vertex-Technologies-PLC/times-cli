@@ -268,6 +268,25 @@ pub struct Listing {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct DepotEnvVar {
+    #[serde(default)]
+    pub id: Option<String>,
+    pub name: String,
+    #[serde(default)]
+    pub is_secret: bool,
+    #[serde(default)]
+    pub fingerprint: Option<String>,
+    #[serde(default)]
+    pub updated_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct DepotEnvReveal {
+    pub name: String,
+    pub value: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct DepotJob {
     pub id: String,
     pub slug: String,

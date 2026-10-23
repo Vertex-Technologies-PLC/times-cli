@@ -19,6 +19,7 @@ const DEV_SCOPES: &[&str] = &[
     "depot:read",
     "depot:deploy",
     "depot:repos",
+    "depot:secrets",
 ];
 
 pub async fn run(ctx: &mut Ctx, cmd: TokenCmd) -> anyhow::Result<()> {

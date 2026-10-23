@@ -342,6 +342,9 @@ pub enum AipCmd {
     /// Get or set the store listing
     #[command(subcommand)]
     Listing(ListingCmd),
+    /// Manage depot build-time environment variables and secrets
+    #[command(subcommand)]
+    Env(EnvCmd),
     /// Submit the current version for review
     Submit {
         /// Release notes for reviewers
@@ -406,6 +409,46 @@ pub enum ListingCmd {
         privacy_url: Option<String>,
         #[arg(long)]
         website_url: Option<String>,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum EnvCmd {
+    /// List depot environment variables for an AIP (values are never shown)
+    List {
+        /// Defaults to the slug in times.aip.json
+        slug: Option<String>,
+    },
+    /// Create or update a depot environment variable
+    Set {
+        /// Variable name (A-Z, 0-9, underscore). Example: API_KEY
+        name: String,
+        /// Value to store. Omit to be prompted (interactive) or pass via --from-file
+        #[arg(long, value_name = "VALUE")]
+        value: Option<String>,
+        /// Read the value from a file instead of --value
+        #[arg(long, value_name = "PATH", conflicts_with = "value")]
+        from_file: Option<PathBuf>,
+        /// Store as a non-secret variable (revealable). Default is secret
+        #[arg(long)]
+        plain: bool,
+        /// Defaults to the slug in times.aip.json
+        #[arg(long)]
+        slug: Option<String>,
+    },
+    /// Reveal a non-secret variable value
+    Get {
+        /// Variable name
+        name: String,
+        /// Defaults to the slug in times.aip.json
+        slug: Option<String>,
+    },
+    /// Delete a depot environment variable
+    Delete {
+        /// Variable name
+        name: String,
+        /// Defaults to the slug in times.aip.json
+        slug: Option<String>,
     },
 }
 

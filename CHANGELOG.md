@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.27
+
+- `times aip env list|set|get|delete` manages depot build-time environment variables and secrets (same API as the developers portal).
+- Deploy, pack, and scan warn when `.env` / `.env.*` files are present and point you to `times aip env set` instead of shipping secrets in the bundle.
+- Token scope catalog includes `depot:secrets`.
+
 ## 0.4.26
 
 - Browser `times aip create` handshake shows a polished success or cancel page (name, slug, and a clear return-to-terminal hint).
