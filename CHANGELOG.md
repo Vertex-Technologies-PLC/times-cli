@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.29
+
+- Hide depot `progress N/M P% stage` lines from streamed deploy logs (status bar still uses job progress).
+
 ## 0.4.28
 
 - `times aip deploy --purge-cache` clears the org depot build cache before queuing the job (same choice as the portal deploy confirmation).

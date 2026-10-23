@@ -788,6 +788,7 @@ async fn follow_job(
                             }
                             if let Some(p) = parse_progress_log(text) {
                                 log_progress = p;
+                                continue;
                             }
                             if verbose {
                                 ctx.out.log_line(line.stream.as_deref(), text);
@@ -927,6 +928,9 @@ fn status_fallback_percent(status: &str) -> i32 {
 fn keep_quiet_log_line(text: &str) -> bool {
     let t = text.trim();
     if t.is_empty() {
+        return false;
+    }
+    if parse_progress_log(t).is_some() {
         return false;
     }
     if t.starts_with("npm notice") || t.starts_with("npm warn deprecated") {
@@ -1891,6 +1895,7 @@ mod tests {
     fn quiet_log_filter_drops_npm_noise() {
         assert!(!keep_quiet_log_line("npm notice Changelog: …"));
         assert!(!keep_quiet_log_line("npm warn deprecated foo@1.0.0"));
+        assert!(!keep_quiet_log_line("progress 4/10 30% build"));
         assert!(keep_quiet_log_line("Error: Cannot find module './package.json'"));
         assert!(keep_quiet_log_line("building"));
     }
