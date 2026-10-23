@@ -25,6 +25,7 @@ pub enum PackPhase {
     Zipping,
 }
 
+#[cfg(test)]
 pub fn stage_for_deploy(project_root: &Path) -> anyhow::Result<WorkspacePack> {
     stage_for_deploy_with(project_root, |_| {})
 }

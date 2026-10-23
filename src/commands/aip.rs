@@ -1012,6 +1012,7 @@ async fn upload_source(
     }
 }
 
+#[cfg(test)]
 fn changelog_text(m: &Value, root: &Path, version: &str) -> Option<String> {
     let entry = m
         .pointer("/changelog")

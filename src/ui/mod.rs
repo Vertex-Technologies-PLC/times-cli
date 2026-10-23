@@ -161,14 +161,6 @@ impl Output {
         }
     }
 
-    pub fn status_line(&self, status: &str) {
-        if self.json {
-            return;
-        }
-        let label = status.replace('_', " ");
-        eprintln!("{} {}", style("●").cyan(), style(label).bold());
-    }
-
     pub fn status_progress(&self, current: i32, total: i32, percent: i32, label: &str) {
         if self.json {
             return;
