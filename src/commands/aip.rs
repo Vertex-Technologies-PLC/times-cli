@@ -1890,6 +1890,7 @@ async fn workers_cmd(ctx: &mut Ctx, cmd: WorkersCmd) -> anyhow::Result<()> {
             version,
             replicas,
         } => workers_scale(ctx, slug, version, replicas).await,
+        WorkersCmd::Promote { slug, version } => workers_promote(ctx, slug, version).await,
     }
 }
 
@@ -2006,6 +2007,30 @@ async fn workers_scale(
     }
     ctx.out
         .success(format!("Scaled {slug}@{version} to {replicas} replica(s)."));
+    Ok(())
+}
+
+async fn workers_promote(
+    ctx: &mut Ctx,
+    slug: Option<String>,
+    version: Option<String>,
+) -> anyhow::Result<()> {
+    let slug = resolve_slug(slug)?;
+    let token = ctx.erp_token().await?;
+    let version = resolve_version(ctx, &token, &slug, version).await?;
+    let rows: Vec<DepotWorker> = ctx
+        .client
+        .post(
+            &format!("{}/{}/promote", depot_workers_path(&slug), seg(&version)),
+            Some(&token),
+            &json!({}),
+        )
+        .await?;
+    if ctx.out.json {
+        return ctx.out.json(&rows);
+    }
+    ctx.out
+        .success(format!("Promoted {slug}@{version} to live."));
     Ok(())
 }
 

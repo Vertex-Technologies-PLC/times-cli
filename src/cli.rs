@@ -496,6 +496,12 @@ pub enum WorkersCmd {
         #[arg(long)]
         replicas: u32,
     },
+    /// Promote a staged worker to live
+    Promote {
+        slug: Option<String>,
+        #[arg(long)]
+        version: Option<String>,
+    },
 }
 
 #[derive(Debug, Args)]
