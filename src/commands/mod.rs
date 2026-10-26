@@ -3,6 +3,7 @@ mod auth;
 mod completions;
 mod create_handshake;
 mod dev;
+mod dx;
 mod init;
 mod manifest;
 mod money;
@@ -48,6 +49,11 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         Command::Earnings(args) => money::earnings(&mut session(g, out)?, args).await,
         Command::Payout(cmd) => money::payout(&mut session(g, out)?, cmd).await,
         Command::Token(cmd) => tokens::run(&mut session(g, out)?, cmd).await,
+        Command::Api(args) => dx::api(&mut session(g, out)?, args).await,
+        Command::Events(cmd) => dx::events(&mut session(g, out)?, cmd).await,
+        Command::Billing(cmd) => dx::billing(&mut session(g, out)?, cmd).await,
+        Command::Connector(cmd) => dx::connector(cmd),
+        Command::Registry(cmd) => dx::registry(&out, cmd),
     }
 }
 

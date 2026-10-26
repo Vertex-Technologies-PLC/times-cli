@@ -173,8 +173,8 @@ mod tests {
     #[test]
     fn seed_includes_device_scopes() {
         let set = seed();
-        assert!(set.contains("device:clipboard-write"));
-        assert!(set.contains("device:camera"));
+        assert!(set.contains("device.clipboard:write"));
+        assert!(set.contains("device.camera:use"));
         assert!(!set.contains("root:all"));
     }
 
@@ -182,9 +182,9 @@ mod tests {
     fn override_replaces_the_seed_on_this_thread() {
         install_for_test(["custom:read"]);
         assert!(allows("custom:read"));
-        assert!(!allows("company:read"));
+        assert!(!allows("erp.company:read"));
         clear_test_override();
-        assert!(allows("company:read"));
+        assert!(allows("erp.company:read"));
         assert!(!allows("custom:read"));
     }
 }

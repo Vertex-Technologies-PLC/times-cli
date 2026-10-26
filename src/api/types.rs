@@ -364,6 +364,49 @@ pub struct DepotJobLog {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct DepotWorker {
+    pub id: String,
+    #[serde(default)]
+    pub aip_slug: Option<String>,
+    #[serde(default)]
+    pub version: Option<String>,
+    #[serde(default)]
+    pub replicas: i32,
+    #[serde(default)]
+    pub status: Option<String>,
+    #[serde(default)]
+    pub endpoint: Option<String>,
+    #[serde(default)]
+    pub resource_class: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct DepotWorkerRelease {
+    pub id: String,
+    #[serde(default)]
+    pub version: Option<String>,
+    #[serde(default)]
+    pub image_ref: Option<String>,
+    #[serde(default)]
+    pub digest: Option<String>,
+    #[serde(default)]
+    pub signed: bool,
+    #[serde(default)]
+    pub status: Option<String>,
+    #[serde(default)]
+    pub endpoint: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct DepotWorkerEvent {
+    pub id: String,
+    #[serde(default)]
+    pub event_type: Option<String>,
+    #[serde(default)]
+    pub created_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StatsDay {
     pub day: String,

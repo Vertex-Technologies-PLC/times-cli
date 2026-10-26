@@ -86,6 +86,20 @@ pub enum Command {
     /// Install the latest times CLI
     #[command(alias = "self-upgrade")]
     Upgrade,
+    /// Call the AIP HTTP edge (never the database)
+    Api(ApiArgs),
+    /// Subscribe to AIP events over SSE
+    #[command(subcommand)]
+    Events(EventsCmd),
+    /// Billing helpers that call the billing HTTP API
+    #[command(subcommand)]
+    Billing(BillingCmd),
+    /// Run the payment connector contract suite
+    #[command(subcommand)]
+    Connector(ConnectorCmd),
+    /// Validate registry descriptors or the local manifest
+    #[command(subcommand)]
+    Registry(RegistryCmd),
 }
 
 #[derive(Debug, Subcommand)]
@@ -348,6 +362,9 @@ pub enum AipCmd {
     /// Manage depot build-time environment variables and secrets
     #[command(subcommand)]
     Env(EnvCmd),
+    /// List and scale TIMES-hosted workers
+    #[command(subcommand)]
+    Workers(WorkersCmd),
     /// Submit the current version for review
     Submit {
         /// Release notes for reviewers
@@ -455,6 +472,32 @@ pub enum EnvCmd {
     },
 }
 
+#[derive(Debug, Subcommand)]
+pub enum WorkersCmd {
+    /// List hosted workers for an AIP
+    List { slug: Option<String> },
+    /// Show the staged or live worker for a version
+    Status {
+        slug: Option<String>,
+        #[arg(long)]
+        version: Option<String>,
+    },
+    /// Show worker deploy events
+    Logs {
+        slug: Option<String>,
+        #[arg(long)]
+        version: Option<String>,
+    },
+    /// Set replica count (0 stops the worker)
+    Scale {
+        slug: Option<String>,
+        #[arg(long)]
+        version: Option<String>,
+        #[arg(long)]
+        replicas: u32,
+    },
+}
+
 #[derive(Debug, Args)]
 pub struct StatsArgs {
     #[arg(long)]
@@ -536,4 +579,53 @@ pub struct SetupShellArgs {
     /// Print the snippet instead of writing files
     #[arg(long)]
     pub print: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct ApiArgs {
+    /// HTTP method
+    pub method: String,
+    /// Path on the AIP edge, for example /aip/v1/invoices
+    pub path: String,
+    /// JSON body
+    #[arg(long)]
+    pub body: Option<String>,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum EventsCmd {
+    /// Open /aip/v1/events/stream
+    Listen {
+        #[arg(long)]
+        topic: Option<String>,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum BillingCmd {
+    /// Advance a test clock through the billing HTTP API
+    Simulate {
+        #[arg(long, default_value_t = 1)]
+        days: i64,
+        #[arg(long)]
+        clock: Option<String>,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ConnectorCmd {
+    /// Run the launch-set connector contract cases
+    Test {
+        #[arg(long)]
+        file: Option<PathBuf>,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum RegistryCmd {
+    /// Validate times.aip.json (same checks as `times manifest validate`)
+    Validate {
+        #[arg(long, default_value = ".")]
+        dir: PathBuf,
+    },
 }

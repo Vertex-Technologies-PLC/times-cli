@@ -355,12 +355,15 @@ pub fn manifest_json(o: &Options) -> Value {
     };
     let prefix = bump::changelog_prefix("1.0.0");
     let mut m = json!({
-        "schemaVersion": "1",
+        "schemaVersion": "2",
         "slug": o.slug,
         "kind": o.kind.as_str(),
         "version": "1.0.0",
         "name": o.name,
         "mode": o.mode.as_str(),
+        "realms": ["tenant"],
+        "slots": [],
+        "egress": { "allow": ["api.times.et"] },
         "hosting": hosting_json(o),
         "ui": {
             "framework": o.framework.as_str(),
@@ -370,7 +373,7 @@ pub fn manifest_json(o: &Options) -> Value {
             "icon": "./icon.svg",
             "uses_times_tokens": true
         },
-        "scopes": { "required": ["company:read"] },
+        "scopes": { "required": ["erp.company:read"] },
         "i18n": {
             "locales": LOCALES,
             "catalogs": {
@@ -392,9 +395,8 @@ pub fn manifest_json(o: &Options) -> Value {
     }
     if o.mode == Mode::Runtime {
         m["runtime"] = json!({
-            "workerUrl": "https://your-worker.example.com",
-            "webhookPath": "/times/webhook",
-            "signing": { "algorithm": "hmac-sha256", "header": "X-Times-Signature", "skewSeconds": 300 }
+            "hosting": "times",
+            "webhookPath": "/times/webhook"
         });
     }
     m
@@ -461,7 +463,6 @@ client.waitForInit().then((init) => {
   const body = document.createElement('p');
   body.textContent = t('home.body');
   app.replaceChildren(heading, body);
-  client.ready('1.0.0');
 });
 "#;
 
@@ -536,84 +537,60 @@ const TSCONFIG_VITE: &str = r#"{
 }
 "#;
 
-const STATIC_JS: &str = r#"const PARENT_ORIGIN = 'https://app.times.et';
-const API_BASE = 'https://api.times.et';
-
-function lookup(messages, key) {
+const STATIC_JS: &str = r#"function lookup(messages, key) {
   return key.split('.').reduce((node, part) => (node ? node[part] : undefined), messages) ?? key;
 }
 
-const held = { theme: '', colorMode: '', locale: '' };
+function nonceFromHash() {
+  const raw = location.hash.startsWith('#') ? location.hash.slice(1) : location.hash;
+  return new URLSearchParams(raw).get('times-bridge');
+}
 
-function paintHeld() {
+function paintTheme(theme) {
   const root = document.documentElement;
-  if (held.theme && root.getAttribute('data-theme') !== held.theme) {
-    root.setAttribute('data-theme', held.theme);
-  }
-  if (held.colorMode === 'dark') {
+  if (theme && theme.palette) root.setAttribute('data-theme', theme.palette);
+  if (theme && theme.mode === 'dark') {
     root.classList.add('dark');
     root.style.colorScheme = 'dark';
-  } else if (held.colorMode === 'light') {
+  } else if (theme && theme.mode === 'light') {
     root.classList.remove('dark');
     root.style.colorScheme = 'light';
-  } else if (held.colorMode === 'system') {
-    const dark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-    root.classList.toggle('dark', dark);
-    root.style.colorScheme = dark ? 'dark' : 'light';
-  }
-  if (held.locale && root.lang !== held.locale) root.lang = held.locale;
-}
-
-function holdPrefs(next) {
-  const theme =
-    typeof next.themeId === 'string' ? next.themeId : typeof next.theme === 'string' ? next.theme : '';
-  if (theme && /^[a-z0-9-]+$/.test(theme)) held.theme = theme;
-  if (next.colorMode === 'dark' || next.colorMode === 'light' || next.colorMode === 'system') {
-    held.colorMode = next.colorMode;
-  }
-  if (typeof next.locale === 'string' && /^(en|am|om|ti)$/.test(next.locale)) held.locale = next.locale;
-  paintHeld();
-}
-
-async function syncPreferencesFromApi() {
-  try {
-    const res = await fetch(`${API_BASE}/api/v1/apps/runtime/v1/preferences`, {
-      credentials: 'include'
-    });
-    if (!res.ok) return;
-    const data = await res.json();
-    holdPrefs(data?.data ?? data ?? {});
-  } catch (_) {
-    /* guest may be offline or unsigned */
   }
 }
 
-const boot = new URLSearchParams(location.search);
-holdPrefs({ theme: boot.get('theme'), colorMode: boot.get('colorMode'), locale: boot.get('locale') });
-void syncPreferencesFromApi();
-new MutationObserver(paintHeld).observe(document.documentElement, {
-  attributes: true,
-  attributeFilter: ['data-theme', 'class', 'lang']
-});
+function applyHello(hello) {
+  if (!hello) return;
+  if (hello.locale) document.documentElement.lang = hello.locale;
+  paintTheme(hello.theme);
+  const messages = (hello.messages && hello.messages.home) ? hello.messages : {};
+  const title = document.getElementById('title');
+  const body = document.getElementById('body');
+  if (title) title.textContent = lookup(messages, 'home.title');
+  if (body) body.textContent = lookup(messages, 'home.body');
+}
 
 window.addEventListener('message', (event) => {
-  if (event.origin !== PARENT_ORIGIN) return;
   const msg = event.data;
-  if (!msg || (msg.type !== 'init' && msg.type !== 'theme' && msg.type !== 'preferences' && msg.type !== 'locale')) {
-    return;
-  }
-  const payload = msg.payload ?? {};
-  holdPrefs(payload);
-  if (msg.type !== 'init' && msg.type !== 'locale' && msg.type !== 'preferences') return;
-  const messages = payload.messages ?? {};
-  if (msg.type === 'init' || payload.messages) {
-    document.getElementById('title').textContent = lookup(messages, 'home.title');
-    document.getElementById('body').textContent = lookup(messages, 'home.body');
-  }
-  if (msg.type === 'init') {
-    window.parent.postMessage({ v: 1, type: 'ready', payload: { version: 1, appVersion: '1.0.0' } }, PARENT_ORIGIN);
-  }
+  if (!msg || msg.type !== 'times.bridge.connect' || msg.version !== 2) return;
+  if (msg.nonce !== nonceFromHash()) return;
+  const port = event.ports && event.ports[0];
+  if (!port) return;
+  port.start();
+  port.addEventListener('message', (ev) => {
+    const data = ev.data;
+    if (data && data.id === '1' && data.result) applyHello(data.result);
+  });
+  port.postMessage({
+    id: '1',
+    method: 'hello',
+    params: { protocol: 2, sdk: 'static@2', wants: ['toast', 'close'] }
+  });
 });
+
+const boot = new URLSearchParams(location.search);
+paintTheme({ palette: boot.get('theme'), mode: boot.get('colorMode') });
+if (/^(en|am|om|ti)$/.test(boot.get('locale') || '')) document.documentElement.lang = boot.get('locale');
+fetch('https://api.times.et/aip/v1/me').catch(() => {});
 "#;
 
 const NEXT_CONFIG: &str = r#"/** @type {import('next').NextConfig} */
@@ -726,10 +703,7 @@ const TSCONFIG_NEXT: &str = r#"{
 "#;
 
 async fn resolve_scaffold(out: &Output, opts: &Options) -> anyhow::Result<Vec<(String, String)>> {
-    let spin = out.spinner(format!(
-        "Fetching {} template…",
-        opts.framework.as_str()
-    ));
+    let spin = out.spinner(format!("Fetching {} template…", opts.framework.as_str()));
     let remote = crate::templates::fetch_framework_files(opts.framework).await?;
     spin.finish_and_clear();
     if let Some(files) = remote {
@@ -788,7 +762,7 @@ pub fn scaffold(o: &Options) -> Vec<(String, String)> {
                 "version": "1.0.0",
                 "type": "module",
                 "scripts": { "dev": "vite", "build": "tsc && vite build", "preview": "vite preview" },
-                "dependencies": { "@times-aip/aip-sdk": "^1.0.0" },
+                "dependencies": { "@times-aip/aip-sdk": "^2.0.0" },
                 "devDependencies": { "typescript": "^5.7.0", "vite": "^6.0.0" }
             });
             files.push(("package.json".into(), pretty(&pkg)));
@@ -823,7 +797,7 @@ pub fn scaffold(o: &Options) -> Vec<(String, String)> {
                 "version": "1.0.0",
                 "scripts": { "dev": "next dev", "build": "next build" },
                 "dependencies": {
-                    "@times-aip/aip-sdk": "^1.0.0",
+                    "@times-aip/aip-sdk": "^2.0.0",
                     "next": "^16.0.0",
                     "react": "^19.0.0",
                     "react-dom": "^19.0.0"

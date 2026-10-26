@@ -1,6 +1,7 @@
 pub mod bump;
 pub mod scopes;
 
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
@@ -169,6 +170,14 @@ pub fn validation_plan(m: &Value, root: Option<&Path>) -> Vec<ValidationJob> {
         name: "Changelog",
         run: changelog_checks,
     });
+    jobs.push(ValidationJob {
+        name: "Slots",
+        run: slot_checks,
+    });
+    jobs.push(ValidationJob {
+        name: "Billing",
+        run: billing_checks,
+    });
     if str_at(m, "/hosting/provider").is_some() {
         jobs.push(ValidationJob {
             name: "Hosting",
@@ -197,6 +206,148 @@ fn schema_checks(m: &Value, _: Option<&Path>, r: &mut Report) {
             if path.is_empty() { "/".into() } else { path },
             err.to_string(),
         );
+    }
+}
+
+fn billing_checks(m: &Value, _: Option<&Path>, r: &mut Report) {
+    let Some(billing) = m.pointer("/billing") else {
+        return;
+    };
+    if contains_db_token(billing) {
+        r.error("/billing", "This path is not allowed.");
+        return;
+    }
+    let products = billing
+        .get("products")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let features = billing
+        .get("features")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let prices = billing
+        .get("prices")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let gates = billing
+        .get("gates")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+
+    let mut product_keys = BTreeSet::new();
+    for (i, product) in products.iter().enumerate() {
+        let Some(key) = product.get("key").and_then(Value::as_str) else {
+            continue;
+        };
+        if !product_keys.insert(key.to_string()) {
+            r.error(
+                format!("/billing/products/{i}/key"),
+                format!("Duplicate product `{key}`."),
+            );
+        }
+    }
+
+    let mut feature_keys = BTreeSet::new();
+    for (i, feature) in features.iter().enumerate() {
+        let Some(key) = feature.get("key").and_then(Value::as_str) else {
+            continue;
+        };
+        if !feature_keys.insert(key.to_string()) {
+            r.error(
+                format!("/billing/features/{i}/key"),
+                format!("Duplicate feature `{key}`."),
+            );
+        }
+    }
+
+    let mut price_keys = BTreeSet::new();
+    for (i, price) in prices.iter().enumerate() {
+        let Some(key) = price.get("key").and_then(Value::as_str) else {
+            continue;
+        };
+        if !price_keys.insert(key.to_string()) {
+            r.error(
+                format!("/billing/prices/{i}/key"),
+                format!("Duplicate price `{key}`."),
+            );
+        }
+        if let Some(product) = price.get("product").and_then(Value::as_str) {
+            if !product_keys.contains(product) {
+                r.error(
+                    format!("/billing/prices/{i}/product"),
+                    format!("Price `{key}` references unknown product `{product}`."),
+                );
+            }
+        }
+        if price.get("type").and_then(Value::as_str) == Some("recurring")
+            && price.get("interval").and_then(Value::as_str).is_none()
+        {
+            r.error(
+                format!("/billing/prices/{i}/interval"),
+                format!("Recurring price `{key}` needs an interval."),
+            );
+        }
+    }
+
+    for (i, gate) in gates.iter().enumerate() {
+        let Some(feature) = gate.get("feature").and_then(Value::as_str) else {
+            continue;
+        };
+        if !feature_keys.contains(feature) {
+            r.error(
+                format!("/billing/gates/{i}/feature"),
+                format!("Gate references unknown feature `{feature}`."),
+            );
+        }
+        if let Some(path) = gate.get("path").and_then(Value::as_str) {
+            if path.contains("postgres") || path.contains("/db") || path.contains("sql") {
+                r.error(
+                    format!("/billing/gates/{i}/path"),
+                    "This path is not allowed.",
+                );
+            }
+        }
+    }
+}
+
+fn contains_db_token(value: &Value) -> bool {
+    match value {
+        Value::String(s) => {
+            let lower = s.to_ascii_lowercase();
+            lower.contains("postgres")
+                || lower.contains("jdbc:")
+                || lower.contains("mongodb")
+                || lower.contains("mysql://")
+                || lower.contains("/db")
+                || lower.contains(".sql")
+        }
+        Value::Array(items) => items.iter().any(contains_db_token),
+        Value::Object(map) => map.values().any(contains_db_token),
+        _ => false,
+    }
+}
+
+fn slot_checks(m: &Value, _: Option<&Path>, r: &mut Report) {
+    let Some(slots) = m.pointer("/slots").and_then(Value::as_array) else {
+        return;
+    };
+    const KNOWN: &[&str] = &[
+        "nav.main",
+        "overlay",
+        "invoice.list.actions",
+        "invoice.detail.panel",
+    ];
+    for (i, slot) in slots.iter().enumerate() {
+        let Some(key) = slot.get("key").and_then(Value::as_str) else {
+            continue;
+        };
+        if !KNOWN.contains(&key) && !key.starts_with("nav.") && !key.starts_with("view.override.") {
+            r.error(format!("/slots/{i}/key"), format!("Unknown slot `{key}`."));
+        }
     }
 }
 
@@ -285,7 +436,9 @@ fn entry_checks(m: &Value, root: Option<&Path>, r: &mut Report) {
     }
 
     if mode == "runtime" {
+        let hosted = matches!(str_at(m, "/runtime/hosting"), Some("times"));
         match str_at(m, "/runtime/workerUrl") {
+            None | Some("") if hosted => {}
             None | Some("") => r.error(
                 "/runtime/workerUrl",
                 "Runtime mode needs runtime.workerUrl.",
@@ -533,7 +686,7 @@ fn theme_adoption_checks(m: &Value, root: &Path, r: &mut Report) {
             "Follow the host color mode with the dark class or colorMode.",
         );
     }
-    let loads_prefs = blob.contains("runtime/v1/preferences")
+    let loads_prefs = blob.contains("/aip/v1/me")
         || blob.contains("api.preferences")
         || blob.contains("applyUserPreferences")
         || blob.contains("syncPreferencesFromApi")
@@ -541,7 +694,7 @@ fn theme_adoption_checks(m: &Value, root: &Path, r: &mut Report) {
     if !loads_prefs {
         r.error(
             "/ui",
-            "Load user preferences via createTimesAipClient (SDK fetches /api/v1/apps/runtime/v1/preferences) or call api.preferences / applyUserPreferences so locale, theme palette, and color mode match TIMES.",
+            "Load user preferences via createTimesAipClient (SDK fetches /aip/v1/me) or call api.preferences / applyUserPreferences so locale, theme palette, and color mode match TIMES.",
         );
     }
     let supports_system = blob.contains("prefers-color-scheme")
@@ -586,7 +739,7 @@ fn built_css_palette_checks(m: &Value, root: &Path, r: &mut Report) {
             "Built CSS is missing [data-theme] palette rules. Import @times-aip/aip-sdk/themes.css and rebuild so Grove, Ember, and other TIMES palettes ship.",
         );
     }
-    let loads_prefs_built = css_blobs.contains("runtime/v1/preferences")
+    let loads_prefs_built = css_blobs.contains("/aip/v1/me")
         || css_blobs.contains("applyUserPreferences")
         || css_blobs.contains("syncPreferencesFromApi")
         || css_blobs.contains("createTimesAipClient")
@@ -594,7 +747,7 @@ fn built_css_palette_checks(m: &Value, root: &Path, r: &mut Report) {
     if !loads_prefs_built {
         r.error(
             "/ui",
-            "Built bundle does not fetch user preferences. Use @times-aip/aip-sdk createTimesAipClient (prefs sync) or call /api/v1/apps/runtime/v1/preferences, then rebuild.",
+            "Built bundle does not fetch user preferences. Use @times-aip/aip-sdk createTimesAipClient (prefs sync) or call /aip/v1/me, then rebuild.",
         );
     }
     for id in [
@@ -711,12 +864,13 @@ mod tests {
 
     pub fn sample() -> Value {
         json!({
-            "schemaVersion": "1",
+            "schemaVersion": "2",
             "slug": "my-app",
             "kind": "app",
             "version": "1.0.0",
             "name": "My App",
             "mode": "platform",
+            "realms": ["tenant"],
             "ui": {
                 "framework": "vite",
                 "runtime": "iframe",
@@ -726,7 +880,7 @@ mod tests {
                 "iconDark": "./icon-dark.svg",
                 "uses_times_tokens": true
             },
-            "scopes": { "required": ["company:read"] },
+            "scopes": { "required": ["erp.company:read"] },
             "i18n": {
                 "locales": ["en", "am", "om", "ti"],
                 "catalogs": {
@@ -761,7 +915,9 @@ mod tests {
                 "Icons",
                 "Entry",
                 "Locales",
-                "Changelog"
+                "Changelog",
+                "Slots",
+                "Billing"
             ]
         );
     }
@@ -828,6 +984,9 @@ mod tests {
         assert!(r.errors.iter().any(|e| e.path == "/runtime/workerUrl"));
 
         m["runtime"] = json!({ "workerUrl": "https://worker.example.com/x" });
+        assert!(validate(&m, None).valid);
+
+        m["runtime"] = json!({ "hosting": "times" });
         assert!(validate(&m, None).valid);
     }
 
@@ -949,6 +1108,57 @@ mod tests {
             .errors
             .iter()
             .any(|e| e.message.contains("THEME_BOOT_SCRIPT")));
+    }
+
+    #[test]
+    fn schema_v2_requires_realms() {
+        let mut m = sample();
+        m.as_object_mut().unwrap().remove("realms");
+        let r = validate(&m, None);
+        assert!(r.errors.iter().any(|e| e.message.contains("realms")));
+        m["realms"] = json!(["tenant"]);
+        assert!(validate(&m, None).valid, "{:?}", validate(&m, None).errors);
+    }
+
+    #[test]
+    fn billing_rejects_unknown_price_product() {
+        let mut m = sample();
+        m["billing"] = json!({
+            "products": [{ "key": "hr.pro", "name": "HR Pro" }],
+            "features": [{ "key": "hr.seats", "name": "HR seats", "type": "limit" }],
+            "prices": [{
+                "key": "hr.pro.monthly",
+                "product": "missing",
+                "currency": "ETB",
+                "unitAmount": 100,
+                "type": "recurring"
+            }],
+            "gates": [{ "feature": "missing.feature" }]
+        });
+        let r = validate(&m, None);
+        assert!(r
+            .errors
+            .iter()
+            .any(|e| e.path == "/billing/prices/0/product"));
+        assert!(r
+            .errors
+            .iter()
+            .any(|e| e.path == "/billing/prices/0/interval"));
+        assert!(r
+            .errors
+            .iter()
+            .any(|e| e.path == "/billing/gates/0/feature"));
+    }
+
+    #[test]
+    fn billing_rejects_direct_database_paths() {
+        let mut m = sample();
+        m["billing"] = json!({
+            "products": [{ "key": "hr.pro", "name": "HR Pro" }],
+            "gates": [{ "feature": "hr.seats", "path": "postgres://billing/db" }]
+        });
+        let r = validate(&m, None);
+        assert!(r.errors.iter().any(|e| e.path == "/billing"));
     }
 
     #[test]

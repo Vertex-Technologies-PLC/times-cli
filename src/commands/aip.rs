@@ -3,16 +3,16 @@ use std::time::Duration;
 
 use serde_json::{json, Value};
 
-use crate::api::types::{
-    Aip, DepotEnvReveal, DepotEnvVar, DepotJob, DepotJobLog, DevMe, Items, Listing, Submission,
-    SubmissionDetail,
-};
+use super::create_handshake::{CreateHandshake, Identity, LocalCreateServer};
 use crate::api::seg;
+use crate::api::types::{
+    Aip, DepotEnvReveal, DepotEnvVar, DepotJob, DepotJobLog, DepotWorker, DepotWorkerEvent,
+    DepotWorkerRelease, DevMe, Items, Listing, Submission, SubmissionDetail,
+};
 use crate::bundle::{self, human_size, MAX_BUNDLE_BYTES};
-use crate::cli::{AipCmd, EnvCmd, ListingCmd, OriginCmd};
+use crate::cli::{AipCmd, EnvCmd, ListingCmd, OriginCmd, WorkersCmd};
 use crate::context::Ctx;
 use crate::error::CliError;
-use super::create_handshake::{CreateHandshake, Identity, LocalCreateServer};
 use crate::hosting;
 use crate::manifest::{self, str_at, Loaded};
 use crate::pack_ignore;
@@ -35,7 +35,20 @@ pub async fn run(ctx: &mut Ctx, cmd: AipCmd) -> anyhow::Result<()> {
             bump,
             verbose,
             purge_cache,
-        } => deploy(ctx, dir, remote, r#ref, follow, submit, bump, verbose, purge_cache).await,
+        } => {
+            deploy(
+                ctx,
+                dir,
+                remote,
+                r#ref,
+                follow,
+                submit,
+                bump,
+                verbose,
+                purge_cache,
+            )
+            .await
+        }
         AipCmd::Submit { notes, version } => submit(ctx, notes, version).await,
         AipCmd::Status { slug, version } => status(ctx, slug, version).await,
         AipCmd::Withdraw { version, slug } => withdraw(ctx, slug, version).await,
@@ -57,6 +70,7 @@ pub async fn run(ctx: &mut Ctx, cmd: AipCmd) -> anyhow::Result<()> {
         AipCmd::Origin(OriginCmd::Check { url }) => origin_check(ctx, url).await,
         AipCmd::Listing(cmd) => listing(ctx, cmd).await,
         AipCmd::Env(cmd) => env_cmd(ctx, cmd).await,
+        AipCmd::Workers(cmd) => workers_cmd(ctx, cmd).await,
     }
 }
 
@@ -106,7 +120,9 @@ async fn resolve_version(
     }
     let aip: Aip = ctx.client.get(&aip_path(slug), Some(token), &[]).await?;
     aip.latest_version.ok_or_else(|| {
-        CliError::usage(format!("{slug} has no versions yet. Run `times aip deploy`."))
+        CliError::usage(format!(
+            "{slug} has no versions yet. Run `times aip deploy`."
+        ))
     })
 }
 
@@ -270,12 +286,15 @@ async fn create_via_api(
         .client
         .post("/api/v1/developers/aips", Some(&token), &body)
         .await?;
-    apply_identity(loaded, &Identity {
-        name: aip.name.clone().unwrap_or(identity.name),
-        slug: aip.slug.clone(),
-        kind: aip.kind.clone(),
-        mode: aip.mode.clone().unwrap_or(identity.mode),
-    })?;
+    apply_identity(
+        loaded,
+        &Identity {
+            name: aip.name.clone().unwrap_or(identity.name),
+            slug: aip.slug.clone(),
+            kind: aip.kind.clone(),
+            mode: aip.mode.clone().unwrap_or(identity.mode),
+        },
+    )?;
     if let Some(listing_body) = listing {
         let _: Listing = ctx
             .client
@@ -323,7 +342,8 @@ fn guest_meta_defaults(identity: &Identity) -> (String, String, String) {
 }
 
 fn prompt_listing(ctx: &Ctx, identity: &Identity) -> anyhow::Result<serde_json::Value> {
-    ctx.out.info("Listing (optional fields can be left blank). Defaults come from guest meta.*.");
+    ctx.out
+        .info("Listing (optional fields can be left blank). Defaults come from guest meta.*.");
     let (default_name, default_summary, default_description) = guest_meta_defaults(identity);
     let name = ctx.out.text("Listing name", &default_name)?;
     let summary = ctx.out.text("Summary", &default_summary)?;
@@ -420,8 +440,12 @@ async fn create_via_browser(
 
     ctx.out.info(format!("Open {url}"));
     match open::that(&url) {
-        Ok(()) => ctx.out.info("Opened the developers portal in your browser."),
-        Err(_) => ctx.out.warn("Could not open a browser. Open the URL above yourself."),
+        Ok(()) => ctx
+            .out
+            .info("Opened the developers portal in your browser."),
+        Err(_) => ctx
+            .out
+            .warn("Could not open a browser. Open the URL above yourself."),
     }
     ctx.out
         .info("Waiting for create or cancel in the browser (Ctrl+C to abort)…");
@@ -756,11 +780,9 @@ async fn follow_job(
     let mut last_key = String::new();
     let mut quiet_tail: Vec<String> = Vec::new();
     let mut log_progress = ProgressFromLogs::default();
-    let bar = ctx.out.percent_bar(format!(
-        "{} · {}",
-        job.slug,
-        job_status_label(&job.status)
-    ));
+    let bar = ctx
+        .out
+        .percent_bar(format!("{} · {}", job.slug, job_status_label(&job.status)));
     loop {
         if !ctx.out.json {
             if let Ok(logs) = ctx
@@ -812,7 +834,8 @@ async fn follow_job(
             bar.set_position(pct.clamp(0, 100) as u64);
             bar.finish_and_clear();
             if !ctx.out.json {
-                ctx.out.status_progress(cur, total, pct, job_status_label(&job.status));
+                ctx.out
+                    .status_progress(cur, total, pct, job_status_label(&job.status));
                 if let Some(hit) = quiet_tail.iter().rev().find_map(|l| cache_hit_label(l)) {
                     ctx.out.info(format!("Build cache: {hit}"));
                 }
@@ -1034,10 +1057,8 @@ async fn upload_source(
             Ok(data) => {
                 if !ctx.out.json {
                     if data.get("deduped").and_then(|v| v.as_bool()) == Some(true) {
-                        ctx.out.success(format!(
-                            "Source already on depot ({})",
-                            human_size(total)
-                        ));
+                        ctx.out
+                            .success(format!("Source already on depot ({})", human_size(total)));
                     } else {
                         ctx.out.success(format!("Uploaded {}", human_size(total)));
                     }
@@ -1346,7 +1367,8 @@ async fn cancel_job(ctx: &mut Ctx, id: String) -> anyhow::Result<()> {
     if ctx.out.json {
         return ctx.out.json(&job);
     }
-    ctx.out.success(format!("Cancelled job {} ({})", job.id, job.status));
+    ctx.out
+        .success(format!("Cancelled job {} ({})", job.id, job.status));
     Ok(())
 }
 
@@ -1579,10 +1601,9 @@ fn depot_env_name_path(slug: &str, name: &str) -> String {
 fn normalize_env_name(name: &str) -> anyhow::Result<String> {
     let n = name.trim().to_uppercase();
     let ok = n.len() <= 64
-        && n
-            .chars()
-            .enumerate()
-            .all(|(i, c)| matches!(c, 'A'..='Z' | '0'..='9' | '_') && (i > 0 || c.is_ascii_uppercase()));
+        && n.chars().enumerate().all(|(i, c)| {
+            matches!(c, 'A'..='Z' | '0'..='9' | '_') && (i > 0 || c.is_ascii_uppercase())
+        });
     if !ok || n.is_empty() {
         return Err(CliError::validation(
             "Name must match ^[A-Z][A-Z0-9_]{0,63}$ (example: API_KEY).",
@@ -1622,31 +1643,29 @@ async fn env_list(ctx: &mut Ctx, slug: Option<String>) -> anyhow::Result<()> {
         ));
         return Ok(());
     }
-    let table_rows = rows
-        .into_iter()
-        .map(|row| {
-            vec![
-                row.name,
-                if row.is_secret {
-                    "secret".into()
-                } else {
-                    "variable".into()
-                },
-                or_dash(row.fingerprint.map(|f| {
-                    if f.len() > 12 {
-                        f[..12].to_string()
+    let table_rows =
+        rows.into_iter()
+            .map(|row| {
+                vec![
+                    row.name,
+                    if row.is_secret {
+                        "secret".into()
                     } else {
-                        f
-                    }
-                })),
-                or_dash(row.updated_at),
-            ]
-        })
-        .collect();
-    ctx.out.table(
-        &["name", "type", "fingerprint", "updated"],
-        table_rows,
-    );
+                        "variable".into()
+                    },
+                    or_dash(row.fingerprint.map(|f| {
+                        if f.len() > 12 {
+                            f[..12].to_string()
+                        } else {
+                            f
+                        }
+                    })),
+                    or_dash(row.updated_at),
+                ]
+            })
+            .collect();
+    ctx.out
+        .table(&["name", "type", "fingerprint", "updated"], table_rows);
     Ok(())
 }
 
@@ -1661,9 +1680,8 @@ async fn env_set(
     let slug = resolve_slug(slug)?;
     let name = normalize_env_name(&name)?;
     let value = if let Some(path) = from_file {
-        std::fs::read_to_string(&path).map_err(|e| {
-            CliError::validation(format!("Could not read {}: {e}", path.display()))
-        })?
+        std::fs::read_to_string(&path)
+            .map_err(|e| CliError::validation(format!("Could not read {}: {e}", path.display())))?
     } else if let Some(v) = value {
         v
     } else if ctx.out.interactive {
@@ -1722,19 +1740,18 @@ async fn env_get(ctx: &mut Ctx, slug: Option<String>, name: String) -> anyhow::R
     if ctx.out.json {
         return ctx.out.json(&revealed);
     }
-    ctx.out.fields(&[
-        ("name", revealed.name),
-        ("value", revealed.value),
-    ]);
+    ctx.out
+        .fields(&[("name", revealed.name), ("value", revealed.value)]);
     Ok(())
 }
 
 async fn env_delete(ctx: &mut Ctx, slug: Option<String>, name: String) -> anyhow::Result<()> {
     let slug = resolve_slug(slug)?;
     let name = normalize_env_name(&name)?;
-    if !ctx.out.confirm(&format!(
-        "Delete environment variable {name} from {slug}?"
-    ))? {
+    if !ctx
+        .out
+        .confirm(&format!("Delete environment variable {name} from {slug}?"))?
+    {
         return Ok(());
     }
     let token = ctx.erp_token().await?;
@@ -1859,6 +1876,139 @@ fn listing_issues(listing: &Listing) -> Vec<String> {
     issues
 }
 
+fn depot_workers_path(slug: &str) -> String {
+    format!("/api/v1/depot/aips/{}/workers", seg(slug))
+}
+
+async fn workers_cmd(ctx: &mut Ctx, cmd: WorkersCmd) -> anyhow::Result<()> {
+    match cmd {
+        WorkersCmd::List { slug } => workers_list(ctx, slug).await,
+        WorkersCmd::Status { slug, version } => workers_status(ctx, slug, version).await,
+        WorkersCmd::Logs { slug, version } => workers_logs(ctx, slug, version).await,
+        WorkersCmd::Scale {
+            slug,
+            version,
+            replicas,
+        } => workers_scale(ctx, slug, version, replicas).await,
+    }
+}
+
+async fn workers_list(ctx: &mut Ctx, slug: Option<String>) -> anyhow::Result<()> {
+    let slug = resolve_slug(slug)?;
+    let token = ctx.erp_token().await?;
+    let rows: Vec<DepotWorker> = ctx
+        .client
+        .get(&depot_workers_path(&slug), Some(&token), &[])
+        .await?;
+    if ctx.out.json {
+        return ctx.out.json(&rows);
+    }
+    if rows.is_empty() {
+        ctx.out.info(format!("No hosted workers for {slug}."));
+        return Ok(());
+    }
+    let table = rows
+        .into_iter()
+        .map(|row| {
+            vec![
+                row.version.unwrap_or_else(|| "-".into()),
+                row.status.unwrap_or_else(|| "-".into()),
+                row.replicas.to_string(),
+                row.endpoint.unwrap_or_else(|| "-".into()),
+            ]
+        })
+        .collect();
+    ctx.out
+        .table(&["version", "status", "replicas", "endpoint"], table);
+    Ok(())
+}
+
+async fn workers_status(
+    ctx: &mut Ctx,
+    slug: Option<String>,
+    version: Option<String>,
+) -> anyhow::Result<()> {
+    let slug = resolve_slug(slug)?;
+    let token = ctx.erp_token().await?;
+    let version = resolve_version(ctx, &token, &slug, version).await?;
+    let row: DepotWorkerRelease = ctx
+        .client
+        .get(
+            &format!("{}/{}", depot_workers_path(&slug), seg(&version)),
+            Some(&token),
+            &[],
+        )
+        .await?;
+    if ctx.out.json {
+        return ctx.out.json(&row);
+    }
+    ctx.out.info(format!(
+        "{slug}@{version} {} {}",
+        row.status.unwrap_or_else(|| "-".into()),
+        row.image_ref.unwrap_or_else(|| "-".into())
+    ));
+    Ok(())
+}
+
+async fn workers_logs(
+    ctx: &mut Ctx,
+    slug: Option<String>,
+    version: Option<String>,
+) -> anyhow::Result<()> {
+    let slug = resolve_slug(slug)?;
+    let token = ctx.erp_token().await?;
+    let version = resolve_version(ctx, &token, &slug, version).await?;
+    let rows: Vec<DepotWorkerEvent> = ctx
+        .client
+        .get(
+            &format!("{}/{}/events", depot_workers_path(&slug), seg(&version)),
+            Some(&token),
+            &[],
+        )
+        .await?;
+    if ctx.out.json {
+        return ctx.out.json(&rows);
+    }
+    if rows.is_empty() {
+        ctx.out
+            .info(format!("No worker events for {slug}@{version}."));
+        return Ok(());
+    }
+    for row in rows {
+        ctx.out.info(format!(
+            "{} {}",
+            row.created_at.unwrap_or_else(|| "-".into()),
+            row.event_type.unwrap_or_else(|| "-".into())
+        ));
+    }
+    Ok(())
+}
+
+async fn workers_scale(
+    ctx: &mut Ctx,
+    slug: Option<String>,
+    version: Option<String>,
+    replicas: u32,
+) -> anyhow::Result<()> {
+    let slug = resolve_slug(slug)?;
+    let token = ctx.erp_token().await?;
+    let version = resolve_version(ctx, &token, &slug, version).await?;
+    let rows: Vec<DepotWorker> = ctx
+        .client
+        .post(
+            &format!("{}/{}/scale", depot_workers_path(&slug), seg(&version)),
+            Some(&token),
+            &json!({ "replicas": replicas }),
+        )
+        .await?;
+    if ctx.out.json {
+        return ctx.out.json(&rows);
+    }
+    ctx.out
+        .success(format!("Scaled {slug}@{version} to {replicas} replica(s)."));
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1896,7 +2046,9 @@ mod tests {
         assert!(!keep_quiet_log_line("npm notice Changelog: …"));
         assert!(!keep_quiet_log_line("npm warn deprecated foo@1.0.0"));
         assert!(!keep_quiet_log_line("progress 4/10 30% build"));
-        assert!(keep_quiet_log_line("Error: Cannot find module './package.json'"));
+        assert!(keep_quiet_log_line(
+            "Error: Cannot find module './package.json'"
+        ));
         assert!(keep_quiet_log_line("building"));
     }
 

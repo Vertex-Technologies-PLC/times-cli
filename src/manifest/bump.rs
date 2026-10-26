@@ -153,8 +153,8 @@ pub fn sync_package_json(root: &Path, version: &str) -> anyhow::Result<bool> {
     if !path.exists() {
         return Ok(false);
     }
-    let text = fs::read_to_string(&path)
-        .with_context(|| format!("Could not read {}", path.display()))?;
+    let text =
+        fs::read_to_string(&path).with_context(|| format!("Could not read {}", path.display()))?;
     let mut pkg: Value = serde_json::from_str(&text)
         .map_err(|e| CliError::validation(format!("package.json is not valid JSON: {e}")))?;
     if str_at(&pkg, "/version") == Some(version) {

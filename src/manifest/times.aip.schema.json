@@ -19,7 +19,7 @@
   "properties": {
     "schemaVersion": {
       "type": "string",
-      "const": "1"
+      "enum": ["2"]
     },
     "slug": {
       "type": "string",
@@ -192,6 +192,10 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
+        "hosting": {
+          "type": "string",
+          "enum": ["times", "external"]
+        },
         "workerUrl": {
           "type": "string",
           "format": "uri",
@@ -219,6 +223,153 @@
         "events": {
           "type": "array",
           "items": { "type": "string" }
+        }
+      }
+    },
+    "realms": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "enum": ["tenant", "publisher", "platform"]
+      }
+    },
+    "slots": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["key", "surface", "entry"],
+        "properties": {
+          "key": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[a-z0-9]+(?:\\.[a-z0-9]+)*(?:\\.[*])?$"
+          },
+          "surface": {
+            "type": "string",
+            "enum": ["page", "overlay", "slot"]
+          },
+          "entry": {
+            "type": "string",
+            "minLength": 1
+          },
+          "maxHeight": {
+            "type": "integer",
+            "minimum": 48
+          }
+        }
+      }
+    },
+    "egress": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "allow": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "provides": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": ["billing.payment_connector"]
+      }
+    },
+    "billing": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "products": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["key", "name"],
+            "properties": {
+              "key": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$"
+              },
+              "name": { "type": "string", "minLength": 1 }
+            }
+          }
+        },
+        "features": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["key", "name", "type"],
+            "properties": {
+              "key": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$"
+              },
+              "name": { "type": "string", "minLength": 1 },
+              "type": {
+                "type": "string",
+                "enum": ["boolean", "limit", "metered"]
+              }
+            }
+          }
+        },
+        "prices": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["key", "product", "currency", "unitAmount", "type"],
+            "properties": {
+              "key": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$"
+              },
+              "product": { "type": "string", "minLength": 1 },
+              "currency": {
+                "type": "string",
+                "enum": ["ETB", "USD"]
+              },
+              "unitAmount": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "type": {
+                "type": "string",
+                "enum": ["one_time", "recurring"]
+              },
+              "interval": {
+                "type": "string",
+                "enum": ["day", "week", "month", "year"]
+              },
+              "intervalCount": {
+                "type": "integer",
+                "minimum": 1
+              }
+            }
+          }
+        },
+        "gates": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["feature"],
+            "properties": {
+              "feature": { "type": "string", "minLength": 1 },
+              "slot": { "type": "string" },
+              "scope": { "type": "string" },
+              "path": { "type": "string" }
+            }
+          }
         }
       }
     },
@@ -271,11 +422,23 @@
       },
       "then": {
         "required": ["runtime"],
-        "properties": {
-          "runtime": {
-            "required": ["workerUrl"]
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "runtime": {
+                  "properties": { "hosting": { "const": "times" } },
+                  "required": ["hosting"]
+                }
+              }
+            },
+            "else": {
+              "properties": {
+                "runtime": { "required": ["workerUrl"] }
+              }
+            }
           }
-        }
+        ]
       }
     },
     {
@@ -301,6 +464,15 @@
             }
           }
         }
+      }
+    },
+    {
+      "if": {
+        "properties": { "schemaVersion": { "const": "2" } },
+        "required": ["schemaVersion"]
+      },
+      "then": {
+        "required": ["realms"]
       }
     }
   ]
